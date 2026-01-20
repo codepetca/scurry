@@ -36,31 +36,90 @@ export function Map({ bounds, children }: MapProps) {
       (bounds.north + bounds.south) / 2,
     ];
 
-    // Initialize map with simple raster tiles for now
-    // Will switch to Protomaps vector tiles with custom style in Phase 2
+    // Protomaps API key from environment
+    const apiKey = process.env.NEXT_PUBLIC_PROTOMAPS_API_KEY;
+
+    // Initialize map with Protomaps vector tiles + Level 2 simplified style
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: {
         version: 8,
+        glyphs: "https://cdn.protomaps.com/fonts/pbf/{fontstack}/{range}.pbf",
         sources: {
-          osm: {
-            type: "raster",
-            tiles: [
-              "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
-              "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
-              "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
-            ],
-            tileSize: 256,
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+          protomaps: {
+            type: "vector",
+            url: `https://api.protomaps.com/tiles/v4.json?key=${apiKey}`,
+            attribution: '<a href="https://protomaps.com">Protomaps</a> | <a href="https://openstreetmap.org">OSM</a>',
           },
         },
         layers: [
+          // Background - soft warm gray
           {
-            id: "osm-tiles",
-            type: "raster",
-            source: "osm",
-            minzoom: 0,
-            maxzoom: 19,
+            id: "background",
+            type: "background",
+            paint: {
+              "background-color": "#f5f3f0",
+            },
+          },
+          // Water - soft blue, subtle opacity
+          {
+            id: "water",
+            type: "fill",
+            source: "protomaps",
+            "source-layer": "water",
+            paint: {
+              "fill-color": "#c4dff6",
+              "fill-opacity": 0.6,
+            },
+          },
+          // Parks and green areas - soft green
+          {
+            id: "landuse-park",
+            type: "fill",
+            source: "protomaps",
+            "source-layer": "landuse",
+            filter: ["in", "pmap:kind", "park", "nature_reserve", "garden", "grass", "cemetery"],
+            paint: {
+              "fill-color": "#d5e8d4",
+            },
+          },
+          // Highways (motorway, trunk)
+          {
+            id: "roads-highway",
+            type: "line",
+            source: "protomaps",
+            "source-layer": "roads",
+            filter: ["any",
+              ["==", ["get", "kind_detail"], "motorway"],
+              ["==", ["get", "kind_detail"], "trunk"]
+            ],
+            paint: {
+              "line-color": "#ffffff",
+              "line-width": ["interpolate", ["linear"], ["zoom"], 10, 3, 16, 12],
+            },
+            layout: {
+              "line-cap": "round",
+              "line-join": "round",
+            },
+          },
+          // Main city streets (primary, secondary)
+          {
+            id: "roads-main",
+            type: "line",
+            source: "protomaps",
+            "source-layer": "roads",
+            filter: ["any",
+              ["==", ["get", "kind_detail"], "primary"],
+              ["==", ["get", "kind_detail"], "secondary"]
+            ],
+            paint: {
+              "line-color": "#ffffff",
+              "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 16, 8],
+            },
+            layout: {
+              "line-cap": "round",
+              "line-join": "round",
+            },
           },
         ],
       },
@@ -68,11 +127,14 @@ export function Map({ bounds, children }: MapProps) {
       zoom: 13,
     });
 
-    // Disable zoom controls for cleaner mobile UX
+    // Lock map completely - no pan or zoom
+    map.dragPan.disable();
     map.scrollZoom.disable();
     map.boxZoom.disable();
     map.dragRotate.disable();
-    map.touchZoomRotate.disableRotation();
+    map.keyboard.disable();
+    map.doubleClickZoom.disable();
+    map.touchZoomRotate.disable();
 
     // Fit to bounds when loaded
     map.on("load", () => {
@@ -81,7 +143,7 @@ export function Map({ bounds, children }: MapProps) {
           [bounds.west, bounds.south],
           [bounds.east, bounds.north],
         ],
-        { padding: 40 }
+        { padding: 60, maxZoom: 15 }
       );
       setMapReady(true);
     });
@@ -102,7 +164,7 @@ export function Map({ bounds, children }: MapProps) {
           [bounds.west, bounds.south],
           [bounds.east, bounds.north],
         ],
-        { padding: 40 }
+        { padding: 60, maxZoom: 15 }
       );
     }
   }, [bounds, mapReady]);
