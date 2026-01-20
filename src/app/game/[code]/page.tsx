@@ -6,6 +6,8 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { useVisitorId } from "@/hooks/useVisitorId";
 import { Id } from "../../../../convex/_generated/dataModel";
+import { MultiplayerGame } from "@/components/MultiplayerGame";
+import { GameResults } from "@/components/GameResults";
 
 export default function GamePage() {
   const params = useParams();
@@ -219,22 +221,9 @@ export default function GamePage() {
     );
   }
 
-  // Game has ended
+  // Game has ended - show results
   if (isEnded) {
-    return (
-      <div className="min-h-screen bg-gray-100 p-4 flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Game Over!</h1>
-          <p className="text-gray-600 mb-4">{game.race?.name}</p>
-          <button
-            onClick={() => router.push("/")}
-            className="text-green-500 underline"
-          >
-            Back to home
-          </button>
-        </div>
-      </div>
-    );
+    return <GameResults gameId={game._id} />;
   }
 
   // Lobby view
@@ -340,24 +329,9 @@ export default function GamePage() {
     );
   }
 
-  // Active game - redirect to game play (TODO: implement game play view)
+  // Active game - show game play view
   if (isActive) {
-    return (
-      <div className="min-h-screen bg-gray-100 p-4 flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Game Active!</h1>
-          <p className="text-gray-600 mb-4">Game play view coming soon...</p>
-          {isHost && (
-            <button
-              onClick={handleEnd}
-              className="bg-red-500 text-white px-6 py-2 rounded-lg"
-            >
-              End Game
-            </button>
-          )}
-        </div>
-      </div>
-    );
+    return <MultiplayerGame gameId={game._id} visitorId={visitorId} />;
   }
 
   return null;

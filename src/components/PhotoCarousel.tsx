@@ -1,0 +1,172 @@
+"use client";
+
+import { useState } from "react";
+import { useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { Id } from "../../convex/_generated/dataModel";
+import { getTeamColor } from "@/lib/teamColors";
+
+interface PhotoCarouselProps {
+  gameId: Id<"games">;
+  poiId: Id<"pois">;
+  teamNames: string[];
+  onClose: () => void;
+}
+
+export function PhotoCarousel({
+  gameId,
+  poiId,
+  teamNames,
+  onClose,
+}: PhotoCarouselProps) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  const completions = useQuery(api.completions.listByGameAndPoi, {
+    gameId,
+    poiId,
+  });
+
+  if (!completions || completions.length === 0) {
+    return null;
+  }
+
+  const currentCompletion = completions[currentIndex];
+  const teamIndex = currentCompletion?.teamIndex ?? 0;
+  const teamColor = getTeamColor(teamIndex);
+  const teamName = teamNames[teamIndex] ?? `Team ${teamIndex + 1}`;
+
+  const goNext = () => {
+    setCurrentIndex((prev) => (prev + 1) % completions.length);
+  };
+
+  const goPrev = () => {
+    setCurrentIndex((prev) => (prev - 1 + completions.length) % completions.length);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="relative max-w-lg w-full mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div
+          className="bg-white rounded-t-xl px-4 py-3 flex items-center justify-between"
+          style={{ borderBottom: `3px solid ${teamColor.bg}` }}
+        >
+          <div>
+            <p className="font-medium text-gray-900">
+              {currentCompletion?.playerName}
+            </p>
+            <p className="text-sm" style={{ color: teamColor.text }}>
+              {teamName}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+          >
+            <svg
+              className="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        </div>
+
+        {/* Photo */}
+        <PhotoImage photoId={currentCompletion?.photoId} />
+
+        {/* Navigation */}
+        {completions.length > 1 && (
+          <>
+            <button
+              onClick={goPrev}
+              className="absolute left-2 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white rounded-full p-2 shadow"
+            >
+              <svg
+                className="w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 19l-7-7 7-7"
+                />
+              </svg>
+            </button>
+            <button
+              onClick={goNext}
+              className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white rounded-full p-2 shadow"
+            >
+              <svg
+                className="w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+            </button>
+
+            {/* Dots indicator */}
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+              {completions.map((_, i) => (
+                <button
+                  key={i}
+                  onClick={() => setCurrentIndex(i)}
+                  className={`w-2 h-2 rounded-full transition-colors ${
+                    i === currentIndex ? "bg-white" : "bg-white/50"
+                  }`}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Helper component to load photo URL
+function PhotoImage({ photoId }: { photoId?: Id<"_storage"> }) {
+  const photoUrl = useQuery(
+    api.files.getUrl,
+    photoId ? { storageId: photoId } : "skip"
+  );
+
+  if (!photoUrl) {
+    return (
+      <div className="aspect-square bg-gray-200 flex items-center justify-center">
+        <div className="animate-spin h-8 w-8 border-4 border-green-500 border-t-transparent rounded-full"></div>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={photoUrl}
+      alt="Completed POI"
+      className="w-full aspect-square object-cover rounded-b-xl"
+    />
+  );
+}
