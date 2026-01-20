@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -26,11 +26,20 @@ export function PhotoCarousel({
     poiId,
   });
 
+  // Clamp currentIndex if completions change
+  useEffect(() => {
+    if (completions && currentIndex >= completions.length) {
+      setCurrentIndex(Math.max(0, completions.length - 1));
+    }
+  }, [completions, currentIndex]);
+
   if (!completions || completions.length === 0) {
     return null;
   }
 
-  const currentCompletion = completions[currentIndex];
+  // Safe access with bounds check
+  const safeIndex = Math.min(currentIndex, completions.length - 1);
+  const currentCompletion = completions[safeIndex];
   const teamIndex = currentCompletion?.teamIndex ?? 0;
   const teamColor = getTeamColor(teamIndex);
   const teamName = teamNames[teamIndex] ?? `Team ${teamIndex + 1}`;

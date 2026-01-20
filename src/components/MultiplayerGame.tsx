@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -45,6 +45,8 @@ interface POIData {
 export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
   const [selectedPOI, setSelectedPOI] = useState<POIData | null>(null);
   const [viewingPOI, setViewingPOI] = useState<Id<"pois"> | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [showWinner, setShowWinner] = useState(false);
 
   // Queries
   const game = useQuery(api.games.getById, { gameId });
@@ -54,14 +56,33 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
     game?.raceId ? { raceId: game.raceId } : "skip"
   );
   const completions = useQuery(api.completions.listByGame, { gameId });
-  const teamCompletions = useQuery(api.completions.listByGameGroupedByTeam, {
-    gameId,
-  });
 
   // Mutations
   const generateUploadUrl = useMutation(api.files.generateUploadUrl);
   const createCompletion = useMutation(api.completions.createForGame);
   const endGame = useMutation(api.games.end);
+
+  // Compute team completions client-side (avoids duplicate query)
+  const teamCompletions = useMemo(() => {
+    if (!completions) return {};
+
+    const teamPois: Record<number, Set<string>> = {};
+
+    for (const completion of completions) {
+      const teamIndex = completion.teamIndex ?? 0;
+      if (!teamPois[teamIndex]) {
+        teamPois[teamIndex] = new Set();
+      }
+      teamPois[teamIndex].add(completion.poiId);
+    }
+
+    const result: Record<number, number> = {};
+    for (const [teamIndex, poiSet] of Object.entries(teamPois)) {
+      result[Number(teamIndex)] = poiSet.size;
+    }
+
+    return result;
+  }, [completions]);
 
   // Group completions by POI with team colors
   const poiCompletions = useMemo(() => {
@@ -103,7 +124,7 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
 
   // Find winning team (first to complete all POIs)
   const winningTeam = useMemo(() => {
-    if (!teamCompletions || !game || totalPOIs === 0) return null;
+    if (!game || totalPOIs === 0) return null;
 
     for (let i = 0; i < game.teamNames.length; i++) {
       if ((teamCompletions[i] ?? 0) >= totalPOIs) {
@@ -113,30 +134,52 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
     return null;
   }, [teamCompletions, game, totalPOIs]);
 
+  // Delayed winner modal display
+  useEffect(() => {
+    if (winningTeam && !showWinner) {
+      const timer = setTimeout(() => setShowWinner(true), 1500);
+      return () => clearTimeout(timer);
+    }
+    if (!winningTeam) {
+      setShowWinner(false);
+    }
+  }, [winningTeam, showWinner]);
+
   // Photo upload handler
   const handlePhotoCapture = async (file: File) => {
     if (!selectedPOI) return;
 
-    // Get upload URL
-    const uploadUrl = await generateUploadUrl();
+    setUploadError(null);
 
-    // Upload file
-    const result = await fetch(uploadUrl, {
-      method: "POST",
-      headers: { "Content-Type": file.type },
-      body: file,
-    });
-    const { storageId } = await result.json();
+    try {
+      // Get upload URL
+      const uploadUrl = await generateUploadUrl();
 
-    // Create completion
-    await createCompletion({
-      gameId,
-      visitorId,
-      poiId: selectedPOI._id,
-      photoId: storageId,
-    });
+      // Upload file
+      const result = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
 
-    setSelectedPOI(null);
+      if (!result.ok) {
+        throw new Error("Failed to upload photo");
+      }
+
+      const { storageId } = await result.json();
+
+      // Create completion
+      await createCompletion({
+        gameId,
+        visitorId,
+        poiId: selectedPOI._id,
+        photoId: storageId,
+      });
+
+      setSelectedPOI(null);
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : "Failed to upload photo");
+    }
   };
 
   // Handle ending the game
@@ -190,7 +233,7 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
       {/* Team Progress Bars */}
       <TeamProgressBar
         teamNames={game.teamNames}
-        teamCompletions={teamCompletions ?? {}}
+        teamCompletions={teamCompletions}
         totalPOIs={totalPOIs}
       />
 
@@ -213,6 +256,19 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
         </button>
       )}
 
+      {/* Upload Error */}
+      {uploadError && (
+        <div className="absolute bottom-20 left-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-10 text-center">
+          {uploadError}
+          <button
+            onClick={() => setUploadError(null)}
+            className="ml-2 underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* POI Modal */}
       {selectedPOI && (
         <POIModal
@@ -232,8 +288,8 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
         />
       )}
 
-      {/* Winner Modal */}
-      {winningTeam && game.mode === "competitive" && (
+      {/* Winner Modal (with delay) */}
+      {showWinner && winningTeam && game.mode === "competitive" && (
         <WinnerModal
           winnerName={winningTeam.name}
           winnerColor={getTeamColor(winningTeam.index).bg}

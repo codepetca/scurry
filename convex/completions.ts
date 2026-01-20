@@ -156,22 +156,22 @@ export const listByGameAndPoi = query({
       .filter((q) => q.eq(q.field("poiId"), args.poiId))
       .collect();
 
-    // Get player names for each completion
-    const completionsWithPlayers = await Promise.all(
-      completions.map(async (completion) => {
-        const player = await ctx.db
-          .query("players")
-          .withIndex("by_game_visitor", (q) =>
-            q.eq("gameId", args.gameId).eq("visitorId", completion.visitorId)
-          )
-          .first();
+    // Fetch all players for this game once (avoids N+1 queries)
+    const players = await ctx.db
+      .query("players")
+      .withIndex("by_game", (q) => q.eq("gameId", args.gameId))
+      .collect();
 
-        return {
-          ...completion,
-          playerName: player?.displayName ?? "Unknown",
-        };
-      })
+    // Build lookup map
+    const playerMap = new Map(
+      players.map((p) => [p.visitorId, p.displayName])
     );
+
+    // Add player names to completions
+    const completionsWithPlayers = completions.map((completion) => ({
+      ...completion,
+      playerName: playerMap.get(completion.visitorId) ?? "Unknown",
+    }));
 
     return completionsWithPlayers;
   },

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 interface GameTimerProps {
   startedAt: number;
@@ -14,16 +14,25 @@ export function GameTimer({
   onExpire,
 }: GameTimerProps) {
   const [timeLeft, setTimeLeft] = useState<number>(0);
+  const onExpireRef = useRef(onExpire);
+  const hasExpiredRef = useRef(false);
+
+  // Keep onExpire ref updated
+  useEffect(() => {
+    onExpireRef.current = onExpire;
+  }, [onExpire]);
 
   useEffect(() => {
     const endTime = startedAt + timeLimitMinutes * 60 * 1000;
+    hasExpiredRef.current = false;
 
     const updateTimer = () => {
       const remaining = Math.max(0, endTime - Date.now());
       setTimeLeft(remaining);
 
-      if (remaining === 0 && onExpire) {
-        onExpire();
+      if (remaining === 0 && !hasExpiredRef.current) {
+        hasExpiredRef.current = true;
+        onExpireRef.current?.();
       }
     };
 
@@ -31,7 +40,7 @@ export function GameTimer({
     const interval = setInterval(updateTimer, 1000);
 
     return () => clearInterval(interval);
-  }, [startedAt, timeLimitMinutes, onExpire]);
+  }, [startedAt, timeLimitMinutes]);
 
   const minutes = Math.floor(timeLeft / 60000);
   const seconds = Math.floor((timeLeft % 60000) / 1000);

@@ -1,4 +1,5 @@
 import { mutation, query, internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
 // Generate a random 6-character code
@@ -161,10 +162,20 @@ export const start = mutation({
       throw new Error("Game has already started");
     }
 
+    const startedAt = Date.now();
+
     await ctx.db.patch(args.gameId, {
       status: "active",
-      startedAt: Date.now(),
+      startedAt,
     });
+
+    // Schedule time limit expiry if set
+    if (game.timeLimit) {
+      const expiryTime = startedAt + game.timeLimit * 60 * 1000;
+      await ctx.scheduler.runAt(expiryTime, internal.games.endByTimeLimit, {
+        gameId: args.gameId,
+      });
+    }
 
     return { success: true };
   },
@@ -318,6 +329,27 @@ export const getPlayer = query({
       .first();
 
     return player;
+  },
+});
+
+// End game when time limit expires (internal, called by scheduler)
+export const endByTimeLimit = internalMutation({
+  args: {
+    gameId: v.id("games"),
+  },
+  handler: async (ctx, args) => {
+    const game = await ctx.db.get(args.gameId);
+
+    // Only end if still active
+    if (game && game.status === "active") {
+      await ctx.db.patch(args.gameId, {
+        status: "ended",
+        endedAt: Date.now(),
+      });
+      return { ended: true };
+    }
+
+    return { ended: false };
   },
 });
 
