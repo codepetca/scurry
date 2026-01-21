@@ -17,7 +17,6 @@ export const metadata: Metadata = {
   title: "Scurry",
   description: "Map-first photo scavenger hunt",
   manifest: "/manifest.json",
-  themeColor: "#22c55e",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -34,6 +33,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  themeColor: "#22c55e",
 };
 
 export default function RootLayout({
