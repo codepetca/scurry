@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { Z_INDEX } from "@/lib/zIndex";
 
 interface GameTimerProps {
   startedAt: number;
@@ -50,13 +51,17 @@ export function GameTimer({
 
   return (
     <div
-      className={`absolute top-16 right-4 px-3 py-1 rounded-lg shadow-lg z-10 font-mono text-lg ${
+      className={`absolute top-16 right-4 px-3 py-1 rounded-lg shadow-lg font-mono text-lg ${
         isCritical
           ? "bg-red-500 text-white animate-pulse"
           : isLow
           ? "bg-orange-500 text-white"
           : "bg-white/90 text-gray-900"
       }`}
+      style={{ zIndex: Z_INDEX.MAP_CONTROLS }}
+      role="timer"
+      aria-live={isCritical ? "assertive" : "polite"}
+      aria-label={`Time remaining: ${minutes} minutes and ${seconds} seconds`}
     >
       {String(minutes).padStart(2, "0")}:{String(seconds).padStart(2, "0")}
     </div>

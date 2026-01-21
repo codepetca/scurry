@@ -60,10 +60,10 @@ export function Pin({ lat, lng, isCompleted, photoUrl, onClick, teamColors }: Pi
     if (!elementRef.current) return;
 
     if (isCompleted && photoUrl) {
-      // Determine border color: team colors or default green
-      const borderColor = teamColors && teamColors.length > 0 ? teamColors[0] : "#22c55e";
+      // Primary team color for the inner photo border (first team to complete)
+      const primaryTeamColor = teamColors && teamColors.length > 0 ? teamColors[0] : "#22c55e";
 
-      // Build team rings for multiplayer (stacked colored rings)
+      // Build stacked outer rings for multiplayer (one ring per team)
       let ringsHtml = "";
       if (teamColors && teamColors.length > 1) {
         // Show stacked rings for multiple teams
@@ -77,7 +77,7 @@ export function Pin({ lat, lng, isCompleted, photoUrl, onClick, teamColors }: Pi
       elementRef.current.innerHTML = `
         <div class="relative w-16 h-16 rounded-full shadow-lg overflow-visible cursor-pointer transform -translate-y-1 hover:scale-110 transition-transform">
           ${ringsHtml}
-          <div class="w-full h-full rounded-full border-4 overflow-hidden" style="border-color: ${borderColor};">
+          <div class="w-full h-full rounded-full border-4 overflow-hidden" style="border-color: ${primaryTeamColor};">
             <img src="${photoUrl}" class="w-full h-full object-cover" alt="completed" />
           </div>
         </div>

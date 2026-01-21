@@ -10,7 +10,9 @@ import { PhotoCarousel } from "./PhotoCarousel";
 import { TeamProgressBar } from "./TeamProgressBar";
 import { WinnerModal } from "./WinnerModal";
 import { GameTimer } from "./GameTimer";
+import { MapErrorBoundary } from "./MapErrorBoundary";
 import { getTeamColor } from "@/lib/teamColors";
+import { Z_INDEX } from "@/lib/zIndex";
 
 // Dynamic imports to avoid SSR issues with MapLibre
 const Map = dynamic(
@@ -40,6 +42,25 @@ interface POIData {
   lng: number;
   clue: string;
   order: number;
+}
+
+// Compute bounds from POIs when race bounds are missing
+function computeDefaultBounds(pois: POIData[]) {
+  if (pois.length === 0) {
+    // Fallback to a default location (won't happen in practice)
+    return { north: 0, south: 0, east: 0, west: 0 };
+  }
+
+  const lats = pois.map((p) => p.lat);
+  const lngs = pois.map((p) => p.lng);
+  const padding = 0.01; // ~1km padding
+
+  return {
+    north: Math.max(...lats) + padding,
+    south: Math.min(...lats) - padding,
+    east: Math.max(...lngs) + padding,
+    west: Math.min(...lngs) - padding,
+  };
 }
 
 export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
@@ -104,6 +125,19 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
     return grouped;
   }, [completions]);
 
+  // Collect unique photo IDs for batch query
+  const photoIds = useMemo(() => {
+    return Object.values(poiCompletions)
+      .map((p) => p.photoId)
+      .filter((id): id is Id<"_storage"> => !!id);
+  }, [poiCompletions]);
+
+  // Batch query for all photo URLs (reduces N+1 queries)
+  const photoUrls = useQuery(
+    api.files.getUrls,
+    photoIds.length > 0 ? { storageIds: photoIds } : "skip"
+  );
+
   // Check if current player's team has completed a POI
   const hasTeamCompleted = (poiId: Id<"pois">) => {
     if (!currentPlayer) return false;
@@ -134,16 +168,17 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
     return null;
   }, [teamCompletions, game, totalPOIs]);
 
-  // Delayed winner modal display
+  // Track the first winning team to prevent flickering from rapid updates
+  const [lockedWinner, setLockedWinner] = useState<{ index: number; name: string } | null>(null);
+
+  // Lock in the winner once detected (prevents race condition from rapid updates)
   useEffect(() => {
-    if (winningTeam && !showWinner) {
+    if (winningTeam && !lockedWinner) {
+      setLockedWinner(winningTeam);
       const timer = setTimeout(() => setShowWinner(true), 1500);
       return () => clearTimeout(timer);
     }
-    if (!winningTeam) {
-      setShowWinner(false);
-    }
-  }, [winningTeam, showWinner]);
+  }, [winningTeam, lockedWinner]);
 
   // Photo upload handler
   const handlePhotoCapture = async (file: File) => {
@@ -203,19 +238,25 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
   return (
     <div className="w-full h-screen relative">
       {/* Map */}
-      <Map bounds={game.race?.bounds ?? { north: 0, south: 0, east: 0, west: 0 }}>
+      <MapErrorBoundary>
+        <Map bounds={game.race?.bounds ?? computeDefaultBounds(pois)}>
         {pois.map((poi) => {
           const isCompleted = !!poiCompletions[poi._id];
           const teamColors = getPoiTeamColors(poi._id);
           const poiData = poiCompletions[poi._id];
+          // Get pre-fetched URL from batch query
+          const photoUrl = poiData?.photoId && photoUrls
+            ? photoUrls[poiData.photoId] ?? undefined
+            : undefined;
 
           return (
-            <PinWithPhoto
+            <Pin
               key={poi._id}
-              poi={poi}
+              lat={poi.lat}
+              lng={poi.lng}
               isCompleted={isCompleted}
+              photoUrl={photoUrl}
               teamColors={teamColors}
-              photoId={poiData?.photoId}
               onClick={() => {
                 if (isCompleted) {
                   // View photos for this POI
@@ -228,7 +269,8 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
             />
           );
         })}
-      </Map>
+        </Map>
+      </MapErrorBoundary>
 
       {/* Team Progress Bars */}
       <TeamProgressBar
@@ -250,7 +292,8 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
       {isHost && (
         <button
           onClick={handleEndGame}
-          className="absolute bottom-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-10"
+          className="absolute bottom-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg"
+          style={{ zIndex: Z_INDEX.MAP_CONTROLS }}
         >
           End Game
         </button>
@@ -258,7 +301,10 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
 
       {/* Upload Error */}
       {uploadError && (
-        <div className="absolute bottom-20 left-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-10 text-center">
+        <div
+          className="absolute bottom-20 left-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg text-center"
+          style={{ zIndex: Z_INDEX.MAP_CONTROLS }}
+        >
           {uploadError}
           <button
             onClick={() => setUploadError(null)}
@@ -289,44 +335,13 @@ export function MultiplayerGame({ gameId, visitorId }: MultiplayerGameProps) {
       )}
 
       {/* Winner Modal (with delay) */}
-      {showWinner && winningTeam && game.mode === "competitive" && (
+      {showWinner && lockedWinner && game.mode === "competitive" && (
         <WinnerModal
-          winnerName={winningTeam.name}
-          winnerColor={getTeamColor(winningTeam.index).bg}
+          winnerName={lockedWinner.name}
+          winnerColor={getTeamColor(lockedWinner.index).bg}
           onClose={isHost ? handleEndGame : undefined}
         />
       )}
     </div>
-  );
-}
-
-// Helper component to load photo URL for a pin
-function PinWithPhoto({
-  poi,
-  isCompleted,
-  teamColors,
-  photoId,
-  onClick,
-}: {
-  poi: POIData;
-  isCompleted: boolean;
-  teamColors: string[];
-  photoId?: Id<"_storage">;
-  onClick: () => void;
-}) {
-  const photoUrl = useQuery(
-    api.files.getUrl,
-    photoId ? { storageId: photoId } : "skip"
-  );
-
-  return (
-    <Pin
-      lat={poi.lat}
-      lng={poi.lng}
-      isCompleted={isCompleted}
-      photoUrl={photoUrl ?? undefined}
-      teamColors={teamColors}
-      onClick={onClick}
-    />
   );
 }
