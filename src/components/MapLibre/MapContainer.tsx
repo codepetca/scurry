@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import type { Bounds } from "@/../lib/types";
@@ -42,6 +42,7 @@ export function Map({ bounds, children }: MapProps) {
     // Initialize map with Protomaps vector tiles + Level 2 simplified style
     const map = new maplibregl.Map({
       container: containerRef.current,
+      attributionControl: false,
       style: {
         version: 8,
         glyphs: "https://cdn.protomaps.com/fonts/pbf/{fontstack}/{range}.pbf",
@@ -169,10 +170,17 @@ export function Map({ bounds, children }: MapProps) {
     }
   }, [bounds, mapReady]);
 
+  // Memoize context value to prevent unnecessary re-renders of children
+  const contextValue = useMemo(
+    () => ({ map: mapRef.current }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mapReady] // Only update when map becomes ready
+  );
+
   return (
     <div ref={containerRef} className="w-full h-full">
       {mapReady && (
-        <MapContext.Provider value={{ map: mapRef.current }}>
+        <MapContext.Provider value={contextValue}>
           {children}
         </MapContext.Provider>
       )}

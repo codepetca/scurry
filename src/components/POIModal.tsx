@@ -48,9 +48,9 @@ export function POIModal({ clue, onClose, onPhotoCapture }: POIModalProps) {
           </svg>
         </button>
 
-        {/* Clue */}
+        {/* Photo challenge */}
         <div className="mb-8 mt-4">
-          <h2 className="text-lg font-semibold text-gray-900 mb-2">Your Clue</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-2">Photo Challenge</h2>
           <p className="text-gray-600 text-lg leading-relaxed">{clue}</p>
         </div>
 

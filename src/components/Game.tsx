@@ -220,6 +220,7 @@ function PinWithPhoto({
       isCompleted={!!poi.completion}
       photoUrl={photoUrl ?? undefined}
       onClick={handleClick}
+      order={poi.order}
     />
   );
 }
