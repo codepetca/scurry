@@ -99,6 +99,34 @@ export const updateRace = mutation({
   },
 });
 
+/**
+ * Delete a race and all its POIs
+ */
+export const deleteRace = mutation({
+  args: {
+    raceId: v.id("races"),
+  },
+  handler: async (ctx, args) => {
+    const race = await ctx.db.get(args.raceId);
+    if (!race) {
+      throw new Error("Race not found");
+    }
+
+    // Delete all POIs for this race
+    const pois = await ctx.db
+      .query("pois")
+      .withIndex("by_race", (q) => q.eq("raceId", args.raceId))
+      .collect();
+
+    for (const poi of pois) {
+      await ctx.db.delete(poi._id);
+    }
+
+    // Delete the race
+    await ctx.db.delete(args.raceId);
+  },
+});
+
 export const get = query({
   args: { id: v.id("races") },
   handler: async (ctx, args) => {

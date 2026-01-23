@@ -24,6 +24,10 @@ export function useLocationSearch(
 ): UseLocationSearchResult {
   const { debounceMs = 300, limit = 5, proximity } = options;
 
+  // Extract lat/lng to use as stable dependencies
+  const proximityLat = proximity?.lat;
+  const proximityLng = proximity?.lng;
+
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<GeocodingResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -42,10 +46,15 @@ export function useLocationSearch(
       setIsLoading(true);
       setError(null);
 
+      const proximityOption =
+        proximityLat !== undefined && proximityLng !== undefined
+          ? { lat: proximityLat, lng: proximityLng }
+          : undefined;
+
       try {
         const searchResults = await searchLocations(debouncedQuery, {
           limit,
-          proximity,
+          proximity: proximityOption,
         });
         setResults(searchResults);
       } catch (err) {
@@ -57,7 +66,7 @@ export function useLocationSearch(
     };
 
     search();
-  }, [debouncedQuery, limit, proximity]);
+  }, [debouncedQuery, limit, proximityLat, proximityLng]);
 
   const clearResults = () => {
     setResults([]);

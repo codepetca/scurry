@@ -165,9 +165,6 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
             validationType: poi.validationType,
           })),
         });
-
-        router.push(`/races/${initialRace._id}/edit`);
-        router.refresh();
       } else {
         // Create new race
         const raceId = await createRace({

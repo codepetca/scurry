@@ -278,26 +278,3 @@ export function EditorMap({ pois, onPOIClick, children }: EditorMapProps) {
     </div>
   );
 }
-
-/**
- * Pan map to a specific location
- */
-export function usePanTo() {
-  const map = useMapLibreFromContext();
-
-  return useCallback(
-    (lat: number, lng: number, zoom?: number) => {
-      if (!map) return;
-      map.flyTo({
-        center: [lng, lat],
-        zoom: zoom ?? map.getZoom(),
-      });
-    },
-    [map]
-  );
-}
-
-function useMapLibreFromContext() {
-  const { map } = useMemo(() => ({ map: null as maplibregl.Map | null }), []);
-  return map;
-}
