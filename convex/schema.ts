@@ -18,6 +18,7 @@ export default defineSchema({
     order: v.number(),
     lat: v.number(),
     lng: v.number(),
+    name: v.optional(v.string()),
     clue: v.string(),
     validationType: v.union(
       v.literal("PHOTO_ONLY"),
