@@ -8,7 +8,7 @@ import type { Id } from "@/../convex/_generated/dataModel";
 import { Loader2, Search, X, ChevronUp } from "lucide-react";
 import dynamic from "next/dynamic";
 import type { EditorPOI } from "./POIListItem";
-import { searchLocations, searchNearbyPOIs, type GeocodingResult } from "@/../lib/mapkitSearch";
+import { searchLocations, type GeocodingResult } from "@/../lib/mapkitSearch";
 import type { NearbyPOI } from "./EditorMap";
 
 // Dynamic import for map to avoid SSR issues
@@ -71,8 +71,6 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [currentMapCenter, setCurrentMapCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [searchedLocation, setSearchedLocation] = useState<GeocodingResult | null>(null);
-  const [nearbyPOIs, setNearbyPOIs] = useState<GeocodingResult[]>([]);
-  const [isLoadingNearby, setIsLoadingNearby] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<GeocodingResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -122,7 +120,6 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
   const handleSelectSearchResult = useCallback((result: GeocodingResult) => {
     setMapCenter({ lat: result.lat, lng: result.lng });
     setSearchedLocation(result); // Show as tappable marker
-    setNearbyPOIs([]); // Clear nearby POIs when navigating
     setShowSearchModal(false);
     setSearchQuery("");
     setSearchResults([]);
@@ -132,41 +129,6 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
   const handleMapCenterChange = useCallback((center: { lat: number; lng: number }) => {
     setCurrentMapCenter(center);
   }, []);
-
-  // Search for POIs in current map area (with optional query filter)
-  const handleSearchHere = useCallback(async (query?: string) => {
-    if (!currentMapCenter) return;
-
-    setIsLoadingNearby(true);
-    setSearchedLocation(null); // Clear single searched location
-    setShowSearchModal(false);
-    setSearchQuery("");
-    setSearchResults([]);
-
-    try {
-      if (query) {
-        // Search with specific query term
-        const response = await fetch(
-          `/api/apple-maps-search?q=${encodeURIComponent(query)}&lat=${currentMapCenter.lat}&lng=${currentMapCenter.lng}`
-        );
-        if (response.ok) {
-          const data = await response.json();
-          setNearbyPOIs(data.results || []);
-        } else {
-          setNearbyPOIs([]);
-        }
-      } else {
-        // Generic nearby search
-        const results = await searchNearbyPOIs(currentMapCenter, { limit: 20 });
-        setNearbyPOIs(results);
-      }
-    } catch (error) {
-      console.error("Failed to search nearby POIs:", error);
-      setNearbyPOIs([]);
-    } finally {
-      setIsLoadingNearby(false);
-    }
-  }, [currentMapCenter]);
 
   // Handle POI selection from map (tap to add)
   const handleSelectPOI = useCallback((poi: NearbyPOI) => {
@@ -187,10 +149,6 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
     };
     setPOIs((prev) => [...prev, newPOI]);
     setSearchedLocation(null); // Clear searched location marker after adding
-    // Remove the added POI from nearbyPOIs
-    setNearbyPOIs((prev) => prev.filter(
-      (p) => Math.abs(p.lat - poi.lat) > 0.0001 || Math.abs(p.lng - poi.lng) > 0.0001
-    ));
   }, [pois]);
 
   // Handle POI removal (long press)
@@ -260,31 +218,10 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
           pois={mapPOIs}
           initialCenter={mapCenter}
           searchedLocation={searchedLocation}
-          nearbyPOIs={nearbyPOIs}
           onSelectNearbyPOI={handleSelectPOI}
           onLongPressPOI={handleRemovePOI}
           onCenterChange={handleMapCenterChange}
         />
-
-        {/* Search here button */}
-        <button
-          type="button"
-          onClick={() => handleSearchHere()}
-          disabled={isLoadingNearby || !currentMapCenter}
-          className="absolute bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 bg-white/90 backdrop-blur rounded-full shadow-lg text-sm font-medium text-gray-700 disabled:opacity-50 flex items-center gap-2"
-        >
-          {isLoadingNearby ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Searching...
-            </>
-          ) : (
-            <>
-              <Search className="w-4 h-4" />
-              Search here
-            </>
-          )}
-        </button>
 
         {/* Top bar - floating */}
         <div className="absolute top-0 left-0 right-0 p-4 flex items-center justify-between pointer-events-none">
@@ -409,26 +346,9 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
 
             {/* Search results */}
             <div className="flex-1 overflow-y-auto border-t border-gray-100">
-              {/* Search in this area option */}
-              {searchQuery.trim() && currentMapCenter && (
-                <button
-                  type="button"
-                  onClick={() => handleSearchHere(searchQuery.trim())}
-                  className="w-full flex items-center gap-3 px-4 py-3 border-b border-gray-100 text-left active:bg-blue-50 bg-blue-50/50"
-                >
-                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                    <Search className="w-4 h-4 text-blue-600" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-blue-600 text-sm">Search "{searchQuery.trim()}" in this area</p>
-                    <p className="text-xs text-gray-500">Find all matches on the map</p>
-                  </div>
-                </button>
-              )}
-
               {searchResults.length === 0 && searchQuery && !isSearching && (
                 <div className="p-4 text-center text-gray-500 text-sm">
-                  No direct matches found
+                  No results found
                 </div>
               )}
               {searchResults.length === 0 && !searchQuery && (

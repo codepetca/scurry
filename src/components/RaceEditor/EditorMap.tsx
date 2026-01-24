@@ -31,7 +31,6 @@ interface EditorMapProps {
   pois: EditorPOI[];
   initialCenter?: { lat: number; lng: number } | null;
   searchedLocation?: SearchedLocation | null;
-  nearbyPOIs?: NearbyPOI[];
   onSelectNearbyPOI?: (poi: NearbyPOI) => void;
   onLongPressPOI?: (poiId: string) => void;
   onCenterChange?: (center: { lat: number; lng: number }) => void;
@@ -92,7 +91,6 @@ export function EditorMap({
   pois,
   initialCenter,
   searchedLocation,
-  nearbyPOIs = [],
   onSelectNearbyPOI,
   onLongPressPOI,
   onCenterChange,
@@ -100,7 +98,6 @@ export function EditorMap({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapkit.Map | null>(null);
   const raceAnnotationsRef = useRef<Map<string, mapkit.Annotation>>(new Map());
-  const nearbyAnnotationsRef = useRef<Map<string, mapkit.Annotation>>(new Map());
   const searchedAnnotationRef = useRef<mapkit.Annotation | null>(null);
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const longPressPOIRef = useRef<string | null>(null);
@@ -158,7 +155,6 @@ export function EditorMap({
         mapRef.current = null;
       }
       raceAnnotationsRef.current.clear();
-      nearbyAnnotationsRef.current.clear();
       searchedAnnotationRef.current = null;
       setMapReady(false);
       clearLongPress();
@@ -223,39 +219,6 @@ export function EditorMap({
     });
   }, [pois, mapReady]);
 
-  // Manage nearby POI annotations (orange markers from "Search here")
-  useEffect(() => {
-    if (!mapRef.current || !mapReady) return;
-
-    const map = mapRef.current;
-    const currentAnnotations = nearbyAnnotationsRef.current;
-    const poiIds = new Set(nearbyPOIs.map((p) => p.id));
-
-    // Remove annotations for POIs that no longer exist
-    currentAnnotations.forEach((annotation, id) => {
-      if (!poiIds.has(id)) {
-        map.removeAnnotation(annotation);
-        currentAnnotations.delete(id);
-      }
-    });
-
-    // Add annotations for new POIs
-    nearbyPOIs.forEach((poi) => {
-      if (!currentAnnotations.has(poi.id)) {
-        const annotation = new window.mapkit.MarkerAnnotation(
-          new window.mapkit.Coordinate(poi.lat, poi.lng),
-          {
-            color: "#f97316", // Orange
-            title: poi.name,
-            data: { type: "nearby", poi },
-          }
-        );
-        map.addAnnotation(annotation);
-        currentAnnotations.set(poi.id, annotation);
-      }
-    });
-  }, [nearbyPOIs, mapReady]);
-
   // Manage searched location annotation (orange marker)
   useEffect(() => {
     if (!mapRef.current || !mapReady) return;
@@ -305,10 +268,6 @@ export function EditorMap({
           }
           clearLongPress();
         }, LONG_PRESS_DURATION);
-      } else if (data?.type === "nearby" && data.poi && onSelectNearbyPOI) {
-        // Nearby POI from "Search here" - add it
-        const poi = data.poi as NearbyPOI;
-        onSelectNearbyPOI(poi);
       } else if (data?.type === "searched" && data.location && onSelectNearbyPOI) {
         // Searched location - add it
         onSelectNearbyPOI({
