@@ -2,20 +2,7 @@ import { query, mutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-
-// POI data for bulk operations
-const poiData = v.object({
-  lat: v.number(),
-  lng: v.number(),
-  name: v.optional(v.string()),
-  clue: v.string(),
-  validationType: v.union(
-    v.literal("PHOTO_ONLY"),
-    v.literal("GPS_RADIUS"),
-    v.literal("QR_CODE"),
-    v.literal("MANUAL")
-  ),
-});
+import { poiData, calculateBounds } from "./shared";
 
 export const get = query({
   args: { id: v.id("pois") },
@@ -47,19 +34,8 @@ async function updateRaceBounds(ctx: MutationCtx, raceId: Id<"races">) {
 
   if (pois.length === 0) return;
 
-  let north = -Infinity;
-  let south = Infinity;
-  let east = -Infinity;
-  let west = Infinity;
-
-  for (const poi of pois) {
-    if (poi.lat > north) north = poi.lat;
-    if (poi.lat < south) south = poi.lat;
-    if (poi.lng > east) east = poi.lng;
-    if (poi.lng < west) west = poi.lng;
-  }
-
-  await ctx.db.patch(raceId, { bounds: { north, south, east, west } });
+  const bounds = calculateBounds(pois);
+  await ctx.db.patch(raceId, { bounds });
 }
 
 /**
@@ -121,7 +97,8 @@ export const update = mutation({
       throw new Error("POI not found");
     }
 
-    const updates: { clue?: string; name?: string; lat?: number; lng?: number } = {};
+    const updates: { clue?: string; name?: string; lat?: number; lng?: number } =
+      {};
     if (args.clue !== undefined) updates.clue = args.clue;
     if (args.name !== undefined) updates.name = args.name;
     if (args.lat !== undefined) updates.lat = args.lat;

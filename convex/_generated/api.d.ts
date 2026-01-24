@@ -15,6 +15,7 @@ import type * as games from "../games.js";
 import type * as pois from "../pois.js";
 import type * as races from "../races.js";
 import type * as seed from "../seed.js";
+import type * as shared from "../shared.js";
 
 import type {
   ApiFromModules,
@@ -30,6 +31,7 @@ declare const fullApi: ApiFromModules<{
   pois: typeof pois;
   races: typeof races;
   seed: typeof seed;
+  shared: typeof shared;
 }>;
 
 /**

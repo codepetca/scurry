@@ -10,8 +10,8 @@ import dynamic from "next/dynamic";
 import { LocationSearch } from "./LocationSearch";
 import { POIList } from "./POIList";
 import type { EditorPOI } from "./POIListItem";
-import type { GeocodingResult } from "@/../lib/appleGeocoding";
-import type { PreviewLocation } from "./EditorMap";
+import type { GeocodingResult } from "@/../lib/mapkitSearch";
+import type { SelectedPOI, NearbyPOI } from "./EditorMap";
 
 // Dynamic import for map to avoid SSR issues
 const EditorMap = dynamic(
@@ -67,7 +67,8 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
 
   // UI state
   const [isSaving, setIsSaving] = useState(false);
-  const [previewLocation, setPreviewLocation] = useState<PreviewLocation | null>(null);
+  const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(null);
+  const [selectedPOI, setSelectedPOI] = useState<SelectedPOI | null>(null);
   const [errors, setErrors] = useState<{
     name?: string;
     pois?: string;
@@ -76,40 +77,43 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
 
   // Mutations
   const createRace = useMutation(api.races.createRace);
-  const updateRace = useMutation(api.races.updateRace);
-  const bulkCreatePOIs = useMutation(api.pois.bulkCreate);
+  const updateRaceWithPOIs = useMutation(api.races.updateRaceWithPOIs);
 
-  // Preview a search result on the map
-  const handlePreview = useCallback((result: GeocodingResult) => {
-    setPreviewLocation({
-      lat: result.lat,
-      lng: result.lng,
-      name: result.name,
-      fullAddress: result.fullAddress,
+  // Navigate map to searched location
+  const handleLocationSearch = useCallback((result: GeocodingResult) => {
+    setMapCenter({ lat: result.lat, lng: result.lng });
+  }, []);
+
+  // Handle nearby POI selection from map (including native Apple Maps POIs)
+  const handleSelectNearbyPOI = useCallback((poi: NearbyPOI) => {
+    setSelectedPOI({
+      lat: poi.lat,
+      lng: poi.lng,
+      name: poi.name,
+      fullAddress: poi.fullAddress,
     });
   }, []);
 
-  // Confirm adding the previewed location
-  const handleConfirmAdd = useCallback(() => {
-    if (!previewLocation) return;
+  // Add selected POI to race
+  const handleAddPOI = useCallback(() => {
+    if (!selectedPOI) return;
 
     const newPOI: EditorPOI = {
       id: generateId(),
-      lat: previewLocation.lat,
-      lng: previewLocation.lng,
-      name: previewLocation.name,
+      lat: selectedPOI.lat,
+      lng: selectedPOI.lng,
+      name: selectedPOI.name,
       clue: "",
       validationType: "PHOTO_ONLY",
     };
     setPOIs((prev) => [...prev, newPOI]);
-    setPreviewLocation(null);
-    // Clear POI count error if we now have enough
+    setSelectedPOI(null);
     setErrors((prev) => ({ ...prev, pois: undefined }));
-  }, [previewLocation]);
+  }, [selectedPOI]);
 
-  // Cancel the preview
-  const handleCancelPreview = useCallback(() => {
-    setPreviewLocation(null);
+  // Clear POI selection
+  const handleClearSelection = useCallback(() => {
+    setSelectedPOI(null);
   }, []);
 
   // Reorder POIs
@@ -122,7 +126,6 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
     setPOIs((prev) =>
       prev.map((poi) => (poi.id === id ? { ...poi, clue } : poi))
     );
-    // Clear this POI's clue error
     setErrors((prev) => ({
       ...prev,
       poiClues: prev.poiClues ? { ...prev.poiClues, [id]: "" } : {},
@@ -166,37 +169,26 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
 
     setIsSaving(true);
     try {
+      const poiData = pois.map((poi) => ({
+        lat: poi.lat,
+        lng: poi.lng,
+        name: poi.name,
+        clue: poi.clue.trim(),
+        validationType: poi.validationType,
+      }));
+
       if (isEditing && initialRace) {
-        // Update existing race
-        await updateRace({
+        await updateRaceWithPOIs({
           raceId: initialRace._id,
           name: name.trim(),
           description: description.trim(),
-        });
-
-        // Replace all POIs
-        await bulkCreatePOIs({
-          raceId: initialRace._id,
-          pois: pois.map((poi) => ({
-            lat: poi.lat,
-            lng: poi.lng,
-            name: poi.name,
-            clue: poi.clue.trim(),
-            validationType: poi.validationType,
-          })),
+          pois: poiData,
         });
       } else {
-        // Create new race
         const raceId = await createRace({
           name: name.trim(),
           description: description.trim(),
-          pois: pois.map((poi) => ({
-            lat: poi.lat,
-            lng: poi.lng,
-            name: poi.name,
-            clue: poi.clue.trim(),
-            validationType: poi.validationType,
-          })),
+          pois: poiData,
         });
 
         router.push(`/races/${raceId}/edit`);
@@ -307,11 +299,11 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
 
             {/* Location search */}
             <div className="bg-white rounded-lg border border-gray-200 p-4">
-              <h2 className="font-semibold text-gray-900 mb-4">Add Locations</h2>
+              <h2 className="font-semibold text-gray-900 mb-4">Find Location</h2>
               <p className="text-sm text-gray-500 mb-3">
-                Search for a location, then tap &quot;Add Location&quot; on the map to add it.
+                Search for a place, then tap any point of interest on the map to add it.
               </p>
-              <LocationSearch onSelect={handlePreview} />
+              <LocationSearch onSelect={handleLocationSearch} />
             </div>
 
             {/* POI list */}
@@ -338,9 +330,11 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
           <div className="lg:sticky lg:top-4 h-[400px] lg:h-[calc(100vh-8rem)]">
             <EditorMap
               pois={mapPOIs}
-              previewLocation={previewLocation}
-              onAddPreview={handleConfirmAdd}
-              onCancelPreview={handleCancelPreview}
+              initialCenter={mapCenter}
+              selectedPOI={selectedPOI}
+              onSelectNearbyPOI={handleSelectNearbyPOI}
+              onAddPOI={handleAddPOI}
+              onClearSelection={handleClearSelection}
             />
           </div>
         </div>

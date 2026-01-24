@@ -1,38 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
-
-// POI data for creating a race
-const poiData = v.object({
-  lat: v.number(),
-  lng: v.number(),
-  name: v.optional(v.string()),
-  clue: v.string(),
-  validationType: v.union(
-    v.literal("PHOTO_ONLY"),
-    v.literal("GPS_RADIUS"),
-    v.literal("QR_CODE"),
-    v.literal("MANUAL")
-  ),
-});
-
-/**
- * Calculate bounding box from array of coordinates
- */
-function calculateBounds(pois: { lat: number; lng: number }[]) {
-  let north = -Infinity;
-  let south = Infinity;
-  let east = -Infinity;
-  let west = Infinity;
-
-  for (const poi of pois) {
-    if (poi.lat > north) north = poi.lat;
-    if (poi.lat < south) south = poi.lat;
-    if (poi.lng > east) east = poi.lng;
-    if (poi.lng < west) west = poi.lng;
-  }
-
-  return { north, south, east, west };
-}
+import { poiData, calculateBounds } from "./shared";
 
 /**
  * Create a new race with POIs
@@ -77,7 +45,7 @@ export const createRace = mutation({
 });
 
 /**
- * Update race name and description
+ * Update race metadata only (name and description)
  */
 export const updateRace = mutation({
   args: {
@@ -96,6 +64,63 @@ export const updateRace = mutation({
     if (args.description !== undefined) updates.description = args.description;
 
     await ctx.db.patch(args.raceId, updates);
+  },
+});
+
+/**
+ * Atomically update race metadata and replace all POIs
+ * This ensures race and POIs are updated together in a single transaction
+ */
+export const updateRaceWithPOIs = mutation({
+  args: {
+    raceId: v.id("races"),
+    name: v.string(),
+    description: v.string(),
+    pois: v.array(poiData),
+  },
+  handler: async (ctx, args) => {
+    const race = await ctx.db.get(args.raceId);
+    if (!race) {
+      throw new Error("Race not found");
+    }
+
+    if (args.pois.length < 2) {
+      throw new Error("At least 2 POIs are required");
+    }
+
+    // Calculate bounds from POI positions
+    const bounds = calculateBounds(args.pois);
+
+    // Update race metadata and bounds
+    await ctx.db.patch(args.raceId, {
+      name: args.name,
+      description: args.description,
+      bounds,
+    });
+
+    // Delete existing POIs
+    const existing = await ctx.db
+      .query("pois")
+      .withIndex("by_race", (q) => q.eq("raceId", args.raceId))
+      .collect();
+
+    for (const poi of existing) {
+      await ctx.db.delete(poi._id);
+    }
+
+    // Create new POIs
+    for (let i = 0; i < args.pois.length; i++) {
+      const poi = args.pois[i];
+      await ctx.db.insert("pois", {
+        raceId: args.raceId,
+        order: i + 1,
+        lat: poi.lat,
+        lng: poi.lng,
+        name: poi.name,
+        clue: poi.clue,
+        validationType: poi.validationType,
+      });
+    }
   },
 });
 

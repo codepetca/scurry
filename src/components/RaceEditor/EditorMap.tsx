@@ -1,10 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import maplibregl from "maplibre-gl";
-import { Protocol } from "pmtiles";
-import { MapContext } from "../MapLibre/MapContext";
-import "maplibre-gl/dist/maplibre-gl.css";
+import { useEffect, useRef, useState, useCallback } from "react";
 
 interface EditorPOI {
   id: string;
@@ -14,7 +10,16 @@ interface EditorPOI {
   order: number;
 }
 
-export interface PreviewLocation {
+export interface NearbyPOI {
+  id: string;
+  lat: number;
+  lng: number;
+  name: string;
+  fullAddress: string;
+  category?: string;
+}
+
+export interface SelectedPOI {
   lat: number;
   lng: number;
   name: string;
@@ -23,357 +28,347 @@ export interface PreviewLocation {
 
 interface EditorMapProps {
   pois: EditorPOI[];
-  previewLocation?: PreviewLocation | null;
+  nearbyPOIs?: NearbyPOI[];
+  selectedPOI?: SelectedPOI | null;
+  initialCenter?: { lat: number; lng: number } | null;
+  isLoading?: boolean;
   onPOIClick?: (poi: EditorPOI) => void;
-  onAddPreview?: () => void;
-  onCancelPreview?: () => void;
-  children?: React.ReactNode;
+  onSelectNearbyPOI?: (poi: NearbyPOI) => void;
+  onAddPOI?: () => void;
+  onClearSelection?: () => void;
 }
 
-// Register PMTiles protocol once
-let protocolRegistered = false;
-
-// Default bounds (SF Bay Area)
-const DEFAULT_CENTER: [number, number] = [-122.4194, 37.7749];
+// Default center (SF Bay Area)
+const DEFAULT_CENTER = { lat: 37.7749, lng: -122.4194 };
 const DEFAULT_ZOOM = 12;
+
+// Track MapKit initialization
+let mapkitLoadPromise: Promise<void> | null = null;
+
+async function loadMapKit(): Promise<void> {
+  if (mapkitLoadPromise) return mapkitLoadPromise;
+
+  mapkitLoadPromise = new Promise(async (resolve, reject) => {
+    try {
+      if (!document.querySelector('script[src*="apple-mapkit"]')) {
+        const script = document.createElement("script");
+        script.src = "https://cdn.apple-mapkit.com/mk/5.x.x/mapkit.js";
+        script.crossOrigin = "anonymous";
+
+        await new Promise<void>((res, rej) => {
+          script.onload = () => res();
+          script.onerror = () => rej(new Error("Failed to load MapKit JS"));
+          document.head.appendChild(script);
+        });
+      }
+
+      while (!window.mapkit) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      const tokenResponse = await fetch("/api/mapkit-token");
+      if (!tokenResponse.ok) {
+        throw new Error("Failed to get MapKit token");
+      }
+      const { token } = await tokenResponse.json();
+
+      window.mapkit.init({
+        authorizationCallback: (done: (token: string) => void) => {
+          done(token);
+        },
+      });
+
+      resolve();
+    } catch (error) {
+      mapkitLoadPromise = null;
+      reject(error);
+    }
+  });
+
+  return mapkitLoadPromise;
+}
 
 export function EditorMap({
   pois,
-  previewLocation,
+  nearbyPOIs = [],
+  selectedPOI,
+  initialCenter,
+  isLoading,
   onPOIClick,
-  onAddPreview,
-  onCancelPreview,
-  children
+  onSelectNearbyPOI,
+  onAddPOI,
+  onClearSelection,
 }: EditorMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  const markersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
-  const previewMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const mapRef = useRef<mapkit.Map | null>(null);
+  const raceAnnotationsRef = useRef<Map<string, mapkit.Annotation>>(new Map());
+  const nearbyAnnotationsRef = useRef<Map<string, mapkit.Annotation>>(new Map());
   const [mapReady, setMapReady] = useState(false);
 
+  // Initialize MapKit and create map
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    if (!containerRef.current) return;
 
-    // Register PMTiles protocol
-    if (!protocolRegistered) {
-      const protocol = new Protocol();
-      maplibregl.addProtocol("pmtiles", protocol.tile);
-      protocolRegistered = true;
-    }
+    let map: mapkit.Map | null = null;
 
-    // Protomaps API key from environment
-    const apiKey = process.env.NEXT_PUBLIC_PROTOMAPS_API_KEY;
+    const initMap = async () => {
+      try {
+        await loadMapKit();
 
-    // Initialize map with Protomaps vector tiles + Level 2 simplified style
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      attributionControl: false,
-      style: {
-        version: 8,
-        glyphs: "https://cdn.protomaps.com/fonts/pbf/{fontstack}/{range}.pbf",
-        sources: {
-          protomaps: {
-            type: "vector",
-            url: `https://api.protomaps.com/tiles/v4.json?key=${apiKey}`,
-            attribution:
-              '<a href="https://protomaps.com">Protomaps</a> | <a href="https://openstreetmap.org">OSM</a>',
-          },
-        },
-        layers: [
-          // Background - soft warm gray
-          {
-            id: "background",
-            type: "background",
-            paint: {
-              "background-color": "#f5f3f0",
-            },
-          },
-          // Water - soft blue, subtle opacity
-          {
-            id: "water",
-            type: "fill",
-            source: "protomaps",
-            "source-layer": "water",
-            paint: {
-              "fill-color": "#c4dff6",
-              "fill-opacity": 0.6,
-            },
-          },
-          // Parks and green areas - soft green
-          {
-            id: "landuse-park",
-            type: "fill",
-            source: "protomaps",
-            "source-layer": "landuse",
-            filter: [
-              "in",
-              "pmap:kind",
-              "park",
-              "nature_reserve",
-              "garden",
-              "grass",
-              "cemetery",
-            ],
-            paint: {
-              "fill-color": "#d5e8d4",
-            },
-          },
-          // Highways (motorway, trunk)
-          {
-            id: "roads-highway",
-            type: "line",
-            source: "protomaps",
-            "source-layer": "roads",
-            filter: [
-              "any",
-              ["==", ["get", "kind_detail"], "motorway"],
-              ["==", ["get", "kind_detail"], "trunk"],
-            ],
-            paint: {
-              "line-color": "#ffffff",
-              "line-width": ["interpolate", ["linear"], ["zoom"], 10, 3, 16, 12],
-            },
-            layout: {
-              "line-cap": "round",
-              "line-join": "round",
-            },
-          },
-          // Main city streets (primary, secondary)
-          {
-            id: "roads-main",
-            type: "line",
-            source: "protomaps",
-            "source-layer": "roads",
-            filter: [
-              "any",
-              ["==", ["get", "kind_detail"], "primary"],
-              ["==", ["get", "kind_detail"], "secondary"],
-            ],
-            paint: {
-              "line-color": "#ffffff",
-              "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 16, 8],
-            },
-            layout: {
-              "line-cap": "round",
-              "line-join": "round",
-            },
-          },
-        ],
-      },
-      center: DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM,
-    });
+        if (!containerRef.current || mapRef.current) return;
 
-    // Enable all interactions for editing
-    map.dragPan.enable();
-    map.scrollZoom.enable();
-    map.boxZoom.enable();
-    map.dragRotate.enable();
-    map.keyboard.enable();
-    map.doubleClickZoom.enable();
-    map.touchZoomRotate.enable();
+        map = new window.mapkit.Map(containerRef.current, {
+          center: new window.mapkit.Coordinate(DEFAULT_CENTER.lat, DEFAULT_CENTER.lng),
+          showsCompass: window.mapkit.FeatureVisibility.Hidden,
+          showsZoomControl: false,
+          showsMapTypeControl: false,
+          showsPointsOfInterest: true,
+        });
 
-    // Add navigation controls
-    map.addControl(new maplibregl.NavigationControl(), "top-right");
+        // Enable native POI selection
+        if (window.mapkit.MapFeatureType) {
+          map.selectableMapFeatures = [window.mapkit.MapFeatureType.PointOfInterest];
+        }
 
-    map.on("load", () => {
-      setMapReady(true);
-    });
+        if (map) {
+          map._impl.zoomLevel = DEFAULT_ZOOM;
+          mapRef.current = map;
+          setMapReady(true);
+        }
+      } catch (error) {
+        console.error("Failed to initialize MapKit:", error);
+      }
+    };
 
-    mapRef.current = map;
+    initMap();
 
     return () => {
-      map.remove();
-      mapRef.current = null;
+      if (mapRef.current) {
+        mapRef.current.destroy();
+        mapRef.current = null;
+      }
+      // Clear annotation refs when map is destroyed
+      raceAnnotationsRef.current.clear();
+      nearbyAnnotationsRef.current.clear();
+      setMapReady(false);
     };
   }, []);
 
-  // Manage POI markers
+  // Manage race POI annotations (green numbered markers)
   useEffect(() => {
     if (!mapRef.current || !mapReady) return;
 
     const map = mapRef.current;
-    const currentMarkers = markersRef.current;
+    const currentAnnotations = raceAnnotationsRef.current;
     const poiIds = new Set(pois.map((p) => p.id));
 
-    // Remove markers for POIs that no longer exist
-    currentMarkers.forEach((marker, id) => {
+    // Remove annotations for POIs that no longer exist
+    currentAnnotations.forEach((annotation, id) => {
       if (!poiIds.has(id)) {
-        marker.remove();
-        currentMarkers.delete(id);
+        map.removeAnnotation(annotation);
+        currentAnnotations.delete(id);
       }
     });
 
-    // Add/update markers for current POIs
+    // Add/update annotations for current POIs
     pois.forEach((poi) => {
-      const existingMarker = currentMarkers.get(poi.id);
+      const existing = currentAnnotations.get(poi.id);
 
-      if (existingMarker) {
-        // Update position if marker exists
-        existingMarker.setLngLat([poi.lng, poi.lat]);
-        // Update content
-        const el = existingMarker.getElement();
-        const span = el.querySelector("span");
-        if (span) span.textContent = String(poi.order);
+      if (existing) {
+        existing.coordinate = new window.mapkit.Coordinate(poi.lat, poi.lng);
       } else {
-        // Create new marker
-        const el = document.createElement("div");
-        el.className = "editor-pin";
-        el.innerHTML = `
-          <div class="w-10 h-10 bg-green-500 rounded-full border-3 border-white shadow-lg flex items-center justify-center cursor-pointer transform hover:scale-110 transition-transform">
-            <span class="text-white text-lg font-bold">${poi.order}</span>
-          </div>
-        `;
+        const annotation = new window.mapkit.MarkerAnnotation(
+          new window.mapkit.Coordinate(poi.lat, poi.lng),
+          {
+            color: "#22c55e",
+            glyphText: String(poi.order),
+            title: poi.name,
+            data: { type: "race-poi", poi },
+          }
+        );
 
-        if (onPOIClick) {
-          el.addEventListener("click", () => onPOIClick(poi));
-        }
-
-        const marker = new maplibregl.Marker({
-          element: el,
-          anchor: "center",
-        })
-          .setLngLat([poi.lng, poi.lat])
-          .addTo(map);
-
-        currentMarkers.set(poi.id, marker);
+        map.addAnnotation(annotation);
+        currentAnnotations.set(poi.id, annotation);
       }
     });
-  }, [pois, mapReady, onPOIClick]);
+  }, [pois, mapReady]);
 
-  // Manage preview marker
+  // Manage nearby POI annotations (orange markers)
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return;
+
+    const map = mapRef.current;
+    const currentAnnotations = nearbyAnnotationsRef.current;
+    const poiIds = new Set(nearbyPOIs.map((p) => p.id));
+
+    // Remove annotations for POIs that no longer exist
+    currentAnnotations.forEach((annotation, id) => {
+      if (!poiIds.has(id)) {
+        map.removeAnnotation(annotation);
+        currentAnnotations.delete(id);
+      }
+    });
+
+    // Add/update annotations for nearby POIs
+    nearbyPOIs.forEach((poi) => {
+      const existing = currentAnnotations.get(poi.id);
+      const isSelected = selectedPOI?.lat === poi.lat && selectedPOI?.lng === poi.lng;
+
+      if (existing) {
+        existing.coordinate = new window.mapkit.Coordinate(poi.lat, poi.lng);
+        existing.color = isSelected ? "#22c55e" : "#f97316";
+      } else {
+        const annotation = new window.mapkit.MarkerAnnotation(
+          new window.mapkit.Coordinate(poi.lat, poi.lng),
+          {
+            color: isSelected ? "#22c55e" : "#f97316",
+            title: poi.name,
+            data: { type: "nearby-poi", poi },
+          }
+        );
+
+        map.addAnnotation(annotation);
+        currentAnnotations.set(poi.id, annotation);
+      }
+    });
+  }, [nearbyPOIs, selectedPOI, mapReady]);
+
+  // Handle annotation selection
   useEffect(() => {
     if (!mapRef.current || !mapReady) return;
 
     const map = mapRef.current;
 
-    // Remove existing preview marker
-    if (previewMarkerRef.current) {
-      previewMarkerRef.current.remove();
-      previewMarkerRef.current = null;
-    }
+    const handleSelect = (event: mapkit.MapEvent) => {
+      if (!event.annotation) return;
 
-    // Add new preview marker if we have a preview location
-    if (previewLocation) {
-      const el = document.createElement("div");
-      el.className = "preview-pin";
-      el.innerHTML = `
-        <div class="relative">
-          <div class="w-12 h-12 bg-blue-500 rounded-full border-4 border-white shadow-xl flex items-center justify-center animate-pulse">
-            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
-            </svg>
-          </div>
-          <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-3 h-3 bg-blue-500 rotate-45 border-r-2 border-b-2 border-white"></div>
-        </div>
-      `;
+      const annotation = event.annotation as unknown as Record<string, unknown>;
+      const data = annotation.data as { type: string; poi: EditorPOI | NearbyPOI } | undefined;
 
-      const marker = new maplibregl.Marker({
-        element: el,
-        anchor: "bottom",
-      })
-        .setLngLat([previewLocation.lng, previewLocation.lat])
-        .addTo(map);
+      if (data?.type === "race-poi" && onPOIClick) {
+        onPOIClick(data.poi as EditorPOI);
+      } else if (data?.type === "nearby-poi" && onSelectNearbyPOI) {
+        onSelectNearbyPOI(data.poi as NearbyPOI);
+      } else if (annotation.coordinate && onSelectNearbyPOI) {
+        // Native Apple Maps POI - no custom data but has coordinate
+        const coord = annotation.coordinate as { latitude: number; longitude: number };
+        const name = (annotation.title as string) || "Selected Location";
+        onSelectNearbyPOI({
+          id: `native-${coord.latitude}-${coord.longitude}`,
+          lat: coord.latitude,
+          lng: coord.longitude,
+          name: name,
+          fullAddress: (annotation.subtitle as string) || name,
+        });
+      }
+    };
 
-      previewMarkerRef.current = marker;
+    map.addEventListener("select", handleSelect);
 
-      // Fly to the preview location
-      map.flyTo({
-        center: [previewLocation.lng, previewLocation.lat],
-        zoom: 16,
-        duration: 1000,
-      });
-    }
-  }, [previewLocation, mapReady]);
+    return () => {
+      map.removeEventListener("select", handleSelect);
+    };
+  }, [mapReady, onPOIClick, onSelectNearbyPOI]);
 
-  // Fit bounds when POIs change
+  // Fly to initial center when it changes
+  useEffect(() => {
+    if (!mapRef.current || !mapReady || !initialCenter) return;
+
+    const map = mapRef.current;
+    map.setCenterAnimated(
+      new window.mapkit.Coordinate(initialCenter.lat, initialCenter.lng),
+      true
+    );
+    map._impl.zoomLevel = 16;
+  }, [initialCenter, mapReady]);
+
+  // Fit bounds when race POIs change (only if no initialCenter)
   const fitBounds = useCallback(() => {
     if (!mapRef.current || pois.length === 0) return;
 
     const map = mapRef.current;
 
     if (pois.length === 1) {
-      map.flyTo({
-        center: [pois[0].lng, pois[0].lat],
-        zoom: 15,
-      });
-    } else {
-      let north = -Infinity;
-      let south = Infinity;
-      let east = -Infinity;
-      let west = Infinity;
-
-      for (const poi of pois) {
-        if (poi.lat > north) north = poi.lat;
-        if (poi.lat < south) south = poi.lat;
-        if (poi.lng > east) east = poi.lng;
-        if (poi.lng < west) west = poi.lng;
-      }
-
-      map.fitBounds(
-        [
-          [west, south],
-          [east, north],
-        ],
-        { padding: 60, maxZoom: 15 }
+      map.setCenterAnimated(
+        new window.mapkit.Coordinate(pois[0].lat, pois[0].lng),
+        true
       );
+      map._impl.zoomLevel = 15;
+    } else {
+      const coordinates = pois.map(
+        (p) => new window.mapkit.Coordinate(p.lat, p.lng)
+      );
+      const boundingRegion = window.mapkit.BoundingRegion.fromCoordinates(coordinates);
+      map.setRegionAnimated(boundingRegion.toCoordinateRegion(), true);
     }
   }, [pois]);
 
-  // Auto-fit when POIs change
   useEffect(() => {
-    if (mapReady && pois.length > 0) {
+    if (mapReady && pois.length > 0 && !initialCenter) {
       fitBounds();
     }
-  }, [mapReady, pois.length, fitBounds]);
-
-  // Memoize context value
-  const contextValue = useMemo(
-    () => ({ map: mapRef.current }),
-    [mapReady]
-  );
+  }, [mapReady, pois.length, fitBounds, initialCenter]);
 
   return (
     <div className="relative w-full h-full rounded-lg overflow-hidden">
       <div ref={containerRef} className="w-full h-full" />
-      {mapReady && (
-        <MapContext.Provider value={contextValue}>{children}</MapContext.Provider>
+
+      {/* Loading indicator */}
+      {isLoading && (
+        <div className="absolute top-4 left-4 z-10 px-3 py-2 bg-white rounded-full shadow-lg border border-gray-200 flex items-center gap-2">
+          <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          <span className="text-sm text-gray-600">Loading places...</span>
+        </div>
       )}
 
-      {/* Preview location card */}
-      {previewLocation && (
-        <div className="absolute bottom-4 left-4 right-4 bg-white rounded-lg shadow-xl border border-gray-200 p-4 z-10">
-          <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-gray-900 truncate">{previewLocation.name}</h3>
-              <p className="text-sm text-gray-500 truncate">{previewLocation.fullAddress}</p>
-            </div>
+      {/* Hint text when no POI selected and not loading */}
+      {!selectedPOI && !isLoading && mapReady && nearbyPOIs.length === 0 && (
+        <div className="absolute top-4 left-4 right-4 z-10">
+          <div className="bg-white/90 backdrop-blur rounded-full shadow-lg border border-gray-200 px-4 py-2 text-center">
+            <p className="text-sm text-gray-600">Search for a location to find places nearby</p>
           </div>
-          <div className="flex gap-2 mt-3">
-            <button
-              type="button"
-              onClick={onCancelPreview}
-              className="flex-1 px-4 py-2 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={onAddPreview}
-              className="flex-1 px-4 py-2 text-white bg-green-500 hover:bg-green-600 rounded-lg font-medium transition-colors"
-            >
-              Add Location
-            </button>
+        </div>
+      )}
+
+      {/* Hint when POIs are shown but none selected */}
+      {!selectedPOI && !isLoading && nearbyPOIs.length > 0 && (
+        <div className="absolute top-4 left-4 right-4 z-10">
+          <div className="bg-white/90 backdrop-blur rounded-full shadow-lg border border-gray-200 px-4 py-2 text-center">
+            <p className="text-sm text-gray-600">Tap an orange pin to add it</p>
           </div>
+        </div>
+      )}
+
+      {/* Selected POI - compact bottom bar */}
+      {selectedPOI && (
+        <div className="absolute bottom-4 left-4 right-4 bg-white rounded-full shadow-xl border border-gray-200 px-4 py-2 z-10 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onClearSelection}
+            className="flex-shrink-0 w-8 h-8 text-gray-400 hover:text-gray-600 flex items-center justify-center transition-colors"
+            aria-label="Cancel"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+          <div className="flex-1 min-w-0">
+            <p className="font-medium text-gray-900 truncate">{selectedPOI.name}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onAddPOI}
+            className="flex-shrink-0 w-10 h-10 bg-green-500 hover:bg-green-600 rounded-full flex items-center justify-center transition-colors"
+            aria-label="Add to race"
+          >
+            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
         </div>
       )}
     </div>
   );
 }
+
+// MapKit types are declared in lib/mapkitSearch.ts

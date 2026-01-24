@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useLocationSearch } from "../useLocationSearch";
-import * as geocoding from "@/../lib/appleGeocoding";
+import * as geocoding from "@/../lib/mapkitSearch";
 
 // Mock the geocoding module
-vi.mock("@/../lib/appleGeocoding", () => ({
+vi.mock("@/../lib/mapkitSearch", () => ({
   searchLocations: vi.fn(),
 }));
 

@@ -3,7 +3,7 @@
 import { useRef, useEffect } from "react";
 import { Search, Loader2, MapPin } from "lucide-react";
 import { useLocationSearch } from "@/hooks/useLocationSearch";
-import type { GeocodingResult } from "@/../lib/appleGeocoding";
+import type { GeocodingResult } from "@/../lib/mapkitSearch";
 
 interface LocationSearchProps {
   onSelect: (result: GeocodingResult) => void;
@@ -42,6 +42,13 @@ export function LocationSearch({
     clearResults();
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && results.length > 0) {
+      e.preventDefault();
+      handleSelect(results[0]);
+    }
+  };
+
   const showDropdown = results.length > 0 || (isLoading && query.length > 0);
 
   return (
@@ -53,6 +60,7 @@ export function LocationSearch({
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder={placeholder}
           className="w-full pl-10 pr-10 py-3 bg-white border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
         />
