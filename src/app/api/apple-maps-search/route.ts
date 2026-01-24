@@ -94,17 +94,32 @@ export async function GET(request: NextRequest) {
 
     const accessToken = await getAccessToken();
 
-    // Search for POIs
-    const searchUrl = new URL("https://maps-api.apple.com/v1/search");
+    // Use searchAutocomplete for better autocomplete-style results (like Apple Maps app)
+    const searchUrl = new URL("https://maps-api.apple.com/v1/searchAutocomplete");
     searchUrl.searchParams.set("q", query);
     searchUrl.searchParams.set("searchLocation", `${lat},${lng}`);
     searchUrl.searchParams.set("lang", "en-US");
+    searchUrl.searchParams.set("resultTypeFilter", "PointOfInterest,Address");
 
-    const searchResponse = await fetch(searchUrl.toString(), {
+    let searchResponse = await fetch(searchUrl.toString(), {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
     });
+
+    // Fall back to regular search if autocomplete fails
+    if (!searchResponse.ok) {
+      const fallbackUrl = new URL("https://maps-api.apple.com/v1/search");
+      fallbackUrl.searchParams.set("q", query);
+      fallbackUrl.searchParams.set("searchLocation", `${lat},${lng}`);
+      fallbackUrl.searchParams.set("lang", "en-US");
+
+      searchResponse = await fetch(fallbackUrl.toString(), {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+    }
 
     if (!searchResponse.ok) {
       const error = await searchResponse.text();
@@ -117,21 +132,28 @@ export async function GET(request: NextRequest) {
 
     const data = await searchResponse.json();
 
-    // Transform results to our format
-    const results = (data.results || []).map((result: {
-      id: string;
-      name: string;
+    // Transform results to our format (handles both autocomplete and search responses)
+    const rawResults = data.results || [];
+    const results = rawResults.map((result: {
+      id?: string;
+      name?: string;
+      displayLines?: string[];
       formattedAddressLines?: string[];
-      coordinate: { latitude: number; longitude: number };
+      coordinate?: { latitude: number; longitude: number };
+      location?: { latitude: number; longitude: number };
       poiCategory?: string;
-    }) => ({
-      id: result.id || `poi-${result.coordinate.latitude}-${result.coordinate.longitude}`,
-      name: result.name,
-      fullAddress: result.formattedAddressLines?.join(", ") || result.name,
-      lat: result.coordinate.latitude,
-      lng: result.coordinate.longitude,
-      category: result.poiCategory,
-    }));
+      completionUrl?: string;
+    }) => {
+      const coord = result.coordinate || result.location;
+      return {
+        id: result.id || (coord ? `poi-${coord.latitude}-${coord.longitude}` : `poi-${Math.random()}`),
+        name: result.name || (result.displayLines?.[0]) || "Unknown",
+        fullAddress: result.formattedAddressLines?.join(", ") || result.displayLines?.slice(1).join(", ") || result.name || "",
+        lat: coord?.latitude || 0,
+        lng: coord?.longitude || 0,
+        category: result.poiCategory,
+      };
+    }).filter((r: { lat: number; lng: number }) => r.lat !== 0 && r.lng !== 0);
 
     return NextResponse.json({ results });
   } catch (error) {

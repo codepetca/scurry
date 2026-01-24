@@ -110,6 +110,8 @@ export async function searchLocations(
           return;
         }
 
+        console.log("MapKit search returned", data.places.length, "results for:", query);
+
         const limit = options?.limit ?? 5;
         const results = data.places.slice(0, limit).map((place, index) => ({
           id: `mapkit-${index}-${place.coordinate.latitude}-${place.coordinate.longitude}`,

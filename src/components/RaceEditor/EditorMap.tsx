@@ -19,11 +19,22 @@ export interface NearbyPOI {
   category?: string;
 }
 
+interface SearchedLocation {
+  id: string;
+  lat: number;
+  lng: number;
+  name: string;
+  fullAddress: string;
+}
+
 interface EditorMapProps {
   pois: EditorPOI[];
   initialCenter?: { lat: number; lng: number } | null;
+  searchedLocation?: SearchedLocation | null;
+  nearbyPOIs?: NearbyPOI[];
   onSelectNearbyPOI?: (poi: NearbyPOI) => void;
   onLongPressPOI?: (poiId: string) => void;
+  onCenterChange?: (center: { lat: number; lng: number }) => void;
 }
 
 // Default center (SF Bay Area)
@@ -80,12 +91,17 @@ async function loadMapKit(): Promise<void> {
 export function EditorMap({
   pois,
   initialCenter,
+  searchedLocation,
+  nearbyPOIs = [],
   onSelectNearbyPOI,
   onLongPressPOI,
+  onCenterChange,
 }: EditorMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapkit.Map | null>(null);
   const raceAnnotationsRef = useRef<Map<string, mapkit.Annotation>>(new Map());
+  const nearbyAnnotationsRef = useRef<Map<string, mapkit.Annotation>>(new Map());
+  const searchedAnnotationRef = useRef<mapkit.Annotation | null>(null);
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const longPressPOIRef = useRef<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -142,6 +158,8 @@ export function EditorMap({
         mapRef.current = null;
       }
       raceAnnotationsRef.current.clear();
+      nearbyAnnotationsRef.current.clear();
+      searchedAnnotationRef.current = null;
       setMapReady(false);
       clearLongPress();
     };
@@ -205,6 +223,66 @@ export function EditorMap({
     });
   }, [pois, mapReady]);
 
+  // Manage nearby POI annotations (orange markers from "Search here")
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return;
+
+    const map = mapRef.current;
+    const currentAnnotations = nearbyAnnotationsRef.current;
+    const poiIds = new Set(nearbyPOIs.map((p) => p.id));
+
+    // Remove annotations for POIs that no longer exist
+    currentAnnotations.forEach((annotation, id) => {
+      if (!poiIds.has(id)) {
+        map.removeAnnotation(annotation);
+        currentAnnotations.delete(id);
+      }
+    });
+
+    // Add annotations for new POIs
+    nearbyPOIs.forEach((poi) => {
+      if (!currentAnnotations.has(poi.id)) {
+        const annotation = new window.mapkit.MarkerAnnotation(
+          new window.mapkit.Coordinate(poi.lat, poi.lng),
+          {
+            color: "#f97316", // Orange
+            title: poi.name,
+            data: { type: "nearby", poi },
+          }
+        );
+        map.addAnnotation(annotation);
+        currentAnnotations.set(poi.id, annotation);
+      }
+    });
+  }, [nearbyPOIs, mapReady]);
+
+  // Manage searched location annotation (orange marker)
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return;
+
+    const map = mapRef.current;
+
+    // Remove existing searched annotation
+    if (searchedAnnotationRef.current) {
+      map.removeAnnotation(searchedAnnotationRef.current);
+      searchedAnnotationRef.current = null;
+    }
+
+    // Add new searched annotation if provided
+    if (searchedLocation) {
+      const annotation = new window.mapkit.MarkerAnnotation(
+        new window.mapkit.Coordinate(searchedLocation.lat, searchedLocation.lng),
+        {
+          color: "#f97316", // Orange
+          title: searchedLocation.name,
+          data: { type: "searched", location: searchedLocation },
+        }
+      );
+      map.addAnnotation(annotation);
+      searchedAnnotationRef.current = annotation;
+    }
+  }, [searchedLocation, mapReady]);
+
   // Handle annotation selection and long press
   useEffect(() => {
     if (!mapRef.current || !mapReady) return;
@@ -216,17 +294,30 @@ export function EditorMap({
       if (!event.annotation) return;
 
       const annotation = event.annotation as unknown as Record<string, unknown>;
-      const data = annotation.data as { type: string; poi: EditorPOI } | undefined;
+      const data = annotation.data as { type: string; poi?: EditorPOI | NearbyPOI; location?: SearchedLocation } | undefined;
 
-      if (data?.type === "race-poi") {
+      if (data?.type === "race-poi" && data.poi) {
         // Race POI selected - start long press timer for removal
-        longPressPOIRef.current = data.poi.id;
+        longPressPOIRef.current = (data.poi as EditorPOI).id;
         longPressTimerRef.current = setTimeout(() => {
           if (longPressPOIRef.current && onLongPressPOI) {
             onLongPressPOI(longPressPOIRef.current);
           }
           clearLongPress();
         }, LONG_PRESS_DURATION);
+      } else if (data?.type === "nearby" && data.poi && onSelectNearbyPOI) {
+        // Nearby POI from "Search here" - add it
+        const poi = data.poi as NearbyPOI;
+        onSelectNearbyPOI(poi);
+      } else if (data?.type === "searched" && data.location && onSelectNearbyPOI) {
+        // Searched location - add it
+        onSelectNearbyPOI({
+          id: data.location.id,
+          lat: data.location.lat,
+          lng: data.location.lng,
+          name: data.location.name,
+          fullAddress: data.location.fullAddress,
+        });
       } else if (annotation.coordinate && onSelectNearbyPOI) {
         // Native Apple Maps POI - add it directly
         const coord = annotation.coordinate as { latitude: number; longitude: number };
@@ -255,6 +346,27 @@ export function EditorMap({
       clearLongPress();
     };
   }, [mapReady, onSelectNearbyPOI, onLongPressPOI, clearLongPress]);
+
+  // Track map center changes
+  useEffect(() => {
+    if (!mapRef.current || !mapReady || !onCenterChange) return;
+
+    const map = mapRef.current;
+
+    const handleRegionChange = () => {
+      const center = map.center;
+      onCenterChange({ lat: center.latitude, lng: center.longitude });
+    };
+
+    // Fire immediately with current center
+    handleRegionChange();
+
+    map.addEventListener("region-change-end", handleRegionChange);
+
+    return () => {
+      map.removeEventListener("region-change-end", handleRegionChange);
+    };
+  }, [mapReady, onCenterChange]);
 
   // Fly to initial center when it changes
   useEffect(() => {
