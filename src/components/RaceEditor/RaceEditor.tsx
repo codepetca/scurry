@@ -10,6 +10,8 @@ import dynamic from "next/dynamic";
 import type { EditorPOI } from "./POIListItem";
 import { searchLocations, type GeocodingResult } from "@/../lib/mapkitSearch";
 import type { NearbyPOI } from "./EditorMap";
+import { useVisitorId } from "@/hooks/useVisitorId";
+import { useRecentRaces } from "@/hooks/useRecentRaces";
 
 // Dynamic import for map to avoid SSR issues
 const EditorMap = dynamic(
@@ -36,6 +38,8 @@ interface InitialPOI {
 interface RaceEditorProps {
   initialRace?: InitialRace;
   initialPOIs?: InitialPOI[];
+  mode?: "collaborative" | "competitive";
+  createGameOnSave?: boolean;
 }
 
 function generateId() {
@@ -47,8 +51,23 @@ function generateDefaultName() {
   return `Race ${now.toLocaleDateString()}`;
 }
 
-export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
+async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
+  try {
+    const response = await fetch(`/api/reverse-geocode?lat=${lat}&lng=${lng}`);
+    if (response.ok) {
+      const data = await response.json();
+      return data.locality || data.name || null;
+    }
+  } catch (error) {
+    console.error("Reverse geocode error:", error);
+  }
+  return null;
+}
+
+export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", createGameOnSave = false }: RaceEditorProps) {
   const router = useRouter();
+  const { visitorId } = useVisitorId();
+  const { saveRace } = useRecentRaces();
   const isEditing = !!initialRace;
 
   // Form state
@@ -80,6 +99,7 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
   // Mutations
   const createRace = useMutation(api.races.createRace);
   const updateRaceWithPOIs = useMutation(api.races.updateRaceWithPOIs);
+  const createGame = useMutation(api.games.create);
 
   // Debounced search using Server API (same engine as Apple Maps app)
   useEffect(() => {
@@ -156,10 +176,14 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
     setPOIs((prev) => prev.filter((poi) => poi.id !== poiId));
   }, []);
 
-  // Save race
+  // Save race (and optionally create game)
   const handleSave = async () => {
     if (pois.length < 2) {
-      // Show some feedback - need at least 2 POIs
+      return;
+    }
+
+    if (createGameOnSave && !visitorId) {
+      console.error("No visitor ID for game creation");
       return;
     }
 
@@ -173,7 +197,16 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
         validationType: poi.validationType,
       }));
 
-      const raceName = initialRace?.name || generateDefaultName();
+      // Generate race name
+      let raceName = initialRace?.name || generateDefaultName();
+
+      // If creating a game, try to generate a location-based name
+      if (createGameOnSave && pois.length > 0) {
+        const locationName = await reverseGeocode(pois[0].lat, pois[0].lng);
+        if (locationName) {
+          raceName = `${locationName} Hunt`;
+        }
+      }
 
       if (isEditing && initialRace) {
         await updateRaceWithPOIs({
@@ -188,6 +221,30 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
           description: "",
           pois: poiData,
         });
+
+        if (createGameOnSave && visitorId) {
+          // Save to recent races
+          saveRace({
+            id: raceId,
+            name: raceName,
+            pois: poiData,
+            createdAt: Date.now(),
+          });
+
+          // Create game with the race
+          const teams = mode === "collaborative" ? ["Everyone"] : ["Team 1", "Team 2"];
+          const result = await createGame({
+            raceId,
+            hostId: visitorId,
+            mode,
+            teamNames: teams,
+          });
+
+          // Navigate to game lobby
+          router.push(`/game/${result.code}`);
+          return;
+        }
+
         router.push(`/races/${raceId}/edit`);
       }
     } catch (error) {
@@ -223,68 +280,81 @@ export function RaceEditor({ initialRace, initialPOIs }: RaceEditorProps) {
           onCenterChange={handleMapCenterChange}
         />
 
-        {/* Top bar - floating */}
-        <div className="absolute top-0 left-0 right-0 p-4 flex items-center justify-between pointer-events-none">
-          <button
-            type="button"
-            onClick={() => router.push("/")}
-            className="pointer-events-auto w-10 h-10 bg-white/90 backdrop-blur rounded-full shadow-lg flex items-center justify-center"
-          >
-            <X className="w-5 h-5 text-gray-700" />
-          </button>
+        {/* Top header bar */}
+        <div className="absolute top-0 left-0 right-0 bg-white/95 backdrop-blur shadow-sm">
+          <div className="flex items-center justify-between px-4 py-3">
+            <button
+              type="button"
+              onClick={() => router.push(createGameOnSave ? "/create" : "/")}
+              className="text-gray-600 text-sm font-medium"
+            >
+              Cancel
+            </button>
 
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={isSaving || pois.length < 2}
-            className="pointer-events-auto px-4 py-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-semibold rounded-full shadow-lg flex items-center gap-2 transition-colors"
-          >
-            {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
-            {isSaving ? "Saving..." : "Save"}
-          </button>
+            <p className="text-sm font-semibold text-gray-900">
+              {createGameOnSave ? "Choose Checkpoints" : "Edit Race"}
+            </p>
+
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isSaving || pois.length < 2}
+              className="text-green-600 disabled:text-gray-400 text-sm font-semibold flex items-center gap-1"
+            >
+              {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+              {isSaving ? "..." : "Done"}
+            </button>
+          </div>
         </div>
 
-        {/* POI count badge */}
+        {/* Checkpoint list toggle */}
         {pois.length > 0 && (
           <button
             type="button"
             onClick={() => setShowPOIList(!showPOIList)}
             className="absolute top-16 left-4 px-3 py-1.5 bg-white/90 backdrop-blur rounded-full shadow-lg flex items-center gap-2"
           >
-            <span className="w-6 h-6 bg-green-500 text-white text-sm font-bold rounded-full flex items-center justify-center">
+            <span className="w-6 h-6 bg-blue-500 text-white text-sm font-bold rounded-full flex items-center justify-center">
               {pois.length}
             </span>
-            <span className="text-sm font-medium text-gray-700">locations</span>
+            <span className="text-sm font-medium text-gray-700">checkpoints</span>
             <ChevronUp className={`w-4 h-4 text-gray-500 transition-transform ${showPOIList ? "rotate-180" : ""}`} />
           </button>
         )}
 
-        {/* POI list dropdown */}
+        {/* Checkpoint list dropdown */}
         {showPOIList && pois.length > 0 && (
-          <div className="absolute top-28 left-4 right-4 max-h-64 bg-white/95 backdrop-blur rounded-xl shadow-xl overflow-hidden">
-            <div className="overflow-y-auto max-h-64">
-              {pois.map((poi, index) => (
-                <div
-                  key={poi.id}
-                  className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 last:border-b-0"
-                >
-                  <span className="w-6 h-6 bg-green-500 text-white text-sm font-bold rounded-full flex items-center justify-center flex-shrink-0">
-                    {index + 1}
-                  </span>
-                  <span className="flex-1 text-sm font-medium text-gray-900 truncate">
-                    {poi.name}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemovePOI(poi.id)}
-                    className="w-8 h-8 text-gray-400 hover:text-red-500 flex items-center justify-center"
+          <>
+            {/* Invisible backdrop to close dropdown */}
+            <div
+              className="absolute inset-0 z-10"
+              onClick={() => setShowPOIList(false)}
+            />
+            <div className="absolute top-[6.5rem] left-4 right-4 max-h-64 bg-white/95 backdrop-blur rounded-xl shadow-xl overflow-hidden z-20">
+              <div className="overflow-y-auto max-h-64">
+                {pois.map((poi, index) => (
+                  <div
+                    key={poi.id}
+                    className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 last:border-b-0"
                   >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
+                    <span className="w-6 h-6 bg-blue-500 text-white text-sm font-bold rounded-full flex items-center justify-center flex-shrink-0">
+                      {index + 1}
+                    </span>
+                    <span className="flex-1 text-sm font-medium text-gray-900 truncate">
+                      {poi.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemovePOI(poi.id)}
+                      className="w-8 h-8 text-gray-400 hover:text-red-500 flex items-center justify-center"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          </>
         )}
 
       </div>

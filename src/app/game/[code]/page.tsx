@@ -152,18 +152,25 @@ export default function GamePage() {
     );
   }
 
-  // Join form (not in game yet)
-  if (!isInGame && isLobby) {
+  // Join form (not in game yet - works for both lobby and active games)
+  if (!isInGame && (isLobby || isActive)) {
     return (
       <div className="min-h-screen bg-gray-100 p-4">
         <div className="max-w-md mx-auto">
           <div className="text-center mb-6">
             <h1 className="text-2xl font-bold text-gray-900">{game.race?.name}</h1>
             <p className="text-gray-600">Code: {code}</p>
+            {isActive && (
+              <p className="text-sm text-green-600 mt-2 font-medium">
+                Game in progress - join now!
+              </p>
+            )}
           </div>
 
           <div className="bg-white rounded-xl p-4 shadow-sm">
-            <h2 className="font-medium text-gray-900 mb-4">Join Game</h2>
+            <h2 className="font-medium text-gray-900 mb-4">
+              {isActive ? "Join Active Game" : "Join Game"}
+            </h2>
 
             {error && (
               <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg mb-4">
@@ -213,7 +220,7 @@ export default function GamePage() {
               disabled={isJoining || !displayName.trim()}
               className="w-full py-3 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white font-semibold rounded-xl transition-colors"
             >
-              {isJoining ? "Joining..." : "Join Game"}
+              {isJoining ? "Joining..." : isActive ? "Join Game Now" : "Join Game"}
             </button>
           </div>
         </div>
