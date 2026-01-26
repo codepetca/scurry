@@ -5,13 +5,30 @@ import { useRouter } from "next/navigation";
 import { useMutation } from "convex/react";
 import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
-import { Loader2, Search, X, ChevronUp } from "lucide-react";
+import { Loader2, Search, X, ChevronUp, GripVertical } from "lucide-react";
 import dynamic from "next/dynamic";
 import type { EditorPOI } from "./POIListItem";
 import { searchLocations, type GeocodingResult } from "@/../lib/mapkitSearch";
 import type { NearbyPOI } from "./EditorMap";
 import { useVisitorId } from "@/hooks/useVisitorId";
 import { useRecentRaces } from "@/hooks/useRecentRaces";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 // Dynamic import for map to avoid SSR issues
 const EditorMap = dynamic(
@@ -64,6 +81,66 @@ async function reverseGeocode(lat: number, lng: number): Promise<string | null> 
   return null;
 }
 
+// Sortable checkpoint item component
+interface SortableCheckpointItemProps {
+  poi: EditorPOI;
+  index: number;
+  onSelect: () => void;
+  onRemove: () => void;
+}
+
+function SortableCheckpointItem({ poi, index, onSelect, onRemove }: SortableCheckpointItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: poi.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="flex items-center gap-2 px-3 py-3 border-b border-gray-100/50 last:border-b-0 bg-white/30"
+    >
+      <div
+        {...attributes}
+        {...listeners}
+        className="touch-none text-gray-400 cursor-grab active:cursor-grabbing"
+      >
+        <GripVertical className="w-4 h-4" />
+      </div>
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex-1 flex items-center gap-3 text-left"
+      >
+        <span className="w-6 h-6 bg-blue-500 text-white text-sm font-bold rounded-full flex items-center justify-center flex-shrink-0">
+          {index + 1}
+        </span>
+        <span className="flex-1 text-sm font-medium text-gray-900 truncate">
+          {poi.name}
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="w-8 h-8 text-gray-400 hover:text-red-500 flex items-center justify-center"
+      >
+        <X className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
 export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", createGameOnSave = false }: RaceEditorProps) {
   const router = useRouter();
   const { visitorId } = useVisitorId();
@@ -100,6 +177,31 @@ export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", c
   const createRace = useMutation(api.races.createRace);
   const updateRaceWithPOIs = useMutation(api.races.updateRaceWithPOIs);
   const createGame = useMutation(api.games.create);
+
+  // Drag and drop sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // Handle drag end for reordering checkpoints
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      setPOIs((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  }, []);
 
   // Debounced search using Server API (same engine as Apple Maps app)
   useEffect(() => {
@@ -175,6 +277,20 @@ export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", c
   const handleRemovePOI = useCallback((poiId: string) => {
     setPOIs((prev) => prev.filter((poi) => poi.id !== poiId));
   }, []);
+
+  // Handle Done button - go back if no checkpoints, save if checkpoints exist
+  const handleDone = () => {
+    if (pois.length === 0) {
+      // No checkpoints - go back
+      router.push(createGameOnSave ? "/create" : "/");
+      return;
+    }
+    if (pois.length < 2) {
+      // Need at least 2 checkpoints - could show a toast here
+      return;
+    }
+    handleSave();
+  };
 
   // Save race (and optionally create game)
   const handleSave = async () => {
@@ -281,24 +397,33 @@ export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", c
         />
 
         {/* Top header bar */}
-        <div className="absolute top-0 left-0 right-0 bg-white/95 backdrop-blur shadow-sm">
+        <div className="absolute top-0 left-0 right-0 bg-white/95 backdrop-blur shadow-sm z-30">
           <div className="flex items-center justify-between px-4 py-3">
+            {/* Left: Checkpoint count/list toggle */}
             <button
               type="button"
-              onClick={() => router.push(createGameOnSave ? "/create" : "/")}
-              className="text-gray-600 text-sm font-medium"
+              onClick={() => pois.length > 0 && setShowPOIList(!showPOIList)}
+              className="flex items-center gap-2 min-w-[120px]"
             >
-              Cancel
+              <span className={`w-6 h-6 ${pois.length > 0 ? 'bg-blue-500' : 'bg-gray-300'} text-white text-sm font-bold rounded-full flex items-center justify-center`}>
+                {pois.length}
+              </span>
+              <span className="text-sm font-medium text-gray-700">Checkpoints</span>
+              {pois.length > 0 && (
+                <ChevronUp className={`w-4 h-4 text-gray-500 transition-transform ${showPOIList ? "rotate-180" : ""}`} />
+              )}
             </button>
 
-            <p className="text-sm font-semibold text-gray-900">
-              {createGameOnSave ? "Choose Checkpoints" : "Edit Race"}
+            {/* Center: Title */}
+            <p className="text-sm font-semibold text-gray-900 absolute left-1/2 -translate-x-1/2">
+              {createGameOnSave ? "Create Race" : "Edit Race"}
             </p>
 
+            {/* Right: Done button */}
             <button
               type="button"
-              onClick={handleSave}
-              disabled={isSaving || pois.length < 2}
+              onClick={handleDone}
+              disabled={isSaving}
               className="text-green-600 disabled:text-gray-400 text-sm font-semibold flex items-center gap-1"
             >
               {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -306,21 +431,6 @@ export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", c
             </button>
           </div>
         </div>
-
-        {/* Checkpoint list toggle */}
-        {pois.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowPOIList(!showPOIList)}
-            className="absolute top-16 left-4 px-3 py-1.5 bg-white/90 backdrop-blur rounded-full shadow-lg flex items-center gap-2"
-          >
-            <span className="w-6 h-6 bg-blue-500 text-white text-sm font-bold rounded-full flex items-center justify-center">
-              {pois.length}
-            </span>
-            <span className="text-sm font-medium text-gray-700">checkpoints</span>
-            <ChevronUp className={`w-4 h-4 text-gray-500 transition-transform ${showPOIList ? "rotate-180" : ""}`} />
-          </button>
-        )}
 
         {/* Checkpoint list dropdown */}
         {showPOIList && pois.length > 0 && (
@@ -330,29 +440,32 @@ export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", c
               className="absolute inset-0 z-10"
               onClick={() => setShowPOIList(false)}
             />
-            <div className="absolute top-[6.5rem] left-4 right-4 max-h-64 bg-white/95 backdrop-blur rounded-xl shadow-xl overflow-hidden z-20">
-              <div className="overflow-y-auto max-h-64">
-                {pois.map((poi, index) => (
-                  <div
-                    key={poi.id}
-                    className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 last:border-b-0"
-                  >
-                    <span className="w-6 h-6 bg-blue-500 text-white text-sm font-bold rounded-full flex items-center justify-center flex-shrink-0">
-                      {index + 1}
-                    </span>
-                    <span className="flex-1 text-sm font-medium text-gray-900 truncate">
-                      {poi.name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemovePOI(poi.id)}
-                      className="w-8 h-8 text-gray-400 hover:text-red-500 flex items-center justify-center"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+            <div className="absolute top-14 left-4 right-4 max-h-64 bg-white/70 backdrop-blur rounded-xl shadow-xl overflow-hidden z-20">
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext
+                  items={pois.map((p) => p.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="overflow-y-auto max-h-64">
+                    {pois.map((poi, index) => (
+                      <SortableCheckpointItem
+                        key={poi.id}
+                        poi={poi}
+                        index={index}
+                        onSelect={() => {
+                          setMapCenter({ lat: poi.lat, lng: poi.lng });
+                          setShowPOIList(false);
+                        }}
+                        onRemove={() => handleRemovePOI(poi.id)}
+                      />
+                    ))}
                   </div>
-                ))}
-              </div>
+                </SortableContext>
+              </DndContext>
             </div>
           </>
         )}
