@@ -1,6 +1,7 @@
 "use client";
 
 import { use } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "convex/react";
 import { api } from "@/../convex/_generated/api";
 import type { Id } from "@/../convex/_generated/dataModel";
@@ -13,6 +14,8 @@ interface EditRacePageProps {
 
 export default function EditRacePage({ params }: EditRacePageProps) {
   const { id } = use(params);
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
   const raceId = id as Id<"races">;
 
   const race = useQuery(api.races.get, { id: raceId });
@@ -46,5 +49,5 @@ export default function EditRacePage({ params }: EditRacePageProps) {
     );
   }
 
-  return <RaceEditor initialRace={race} initialPOIs={pois} />;
+  return <RaceEditor initialRace={race} initialPOIs={pois} returnToGame={returnTo} />;
 }

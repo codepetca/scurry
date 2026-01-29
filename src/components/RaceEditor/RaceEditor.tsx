@@ -12,6 +12,7 @@ import { searchLocations, type GeocodingResult } from "@/../lib/mapkitSearch";
 import type { NearbyPOI } from "./EditorMap";
 import { useVisitorId } from "@/hooks/useVisitorId";
 import { useRecentRaces } from "@/hooks/useRecentRaces";
+import { useAutoAnimate } from "@formkit/auto-animate/react";
 import {
   DndContext,
   closestCenter,
@@ -57,6 +58,7 @@ interface RaceEditorProps {
   initialPOIs?: InitialPOI[];
   mode?: "collaborative" | "competitive";
   createGameOnSave?: boolean;
+  returnToGame?: string | null; // Game code to return to after editing
 }
 
 function generateId() {
@@ -141,7 +143,7 @@ function SortableCheckpointItem({ poi, index, onSelect, onRemove }: SortableChec
   );
 }
 
-export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", createGameOnSave = false }: RaceEditorProps) {
+export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", createGameOnSave = false, returnToGame }: RaceEditorProps) {
   const router = useRouter();
   const { visitorId } = useVisitorId();
   const { saveRace } = useRecentRaces();
@@ -172,6 +174,9 @@ export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", c
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [showPOIList, setShowPOIList] = useState(false);
+
+  // Animation for checkpoint list
+  const [listAnimationParent] = useAutoAnimate({ duration: 200 });
 
   // Mutations
   const createRace = useMutation(api.races.createRace);
@@ -282,7 +287,11 @@ export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", c
   const handleDone = () => {
     if (pois.length === 0) {
       // No checkpoints - go back
-      router.push(createGameOnSave ? "/create" : "/");
+      if (returnToGame) {
+        router.push(`/game/${returnToGame}`);
+      } else {
+        router.push(createGameOnSave ? "/create" : "/");
+      }
       return;
     }
     if (pois.length < 2) {
@@ -331,6 +340,11 @@ export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", c
           description: "",
           pois: poiData,
         });
+        // Navigate back to game if we came from one
+        if (returnToGame) {
+          router.push(`/game/${returnToGame}`);
+          return;
+        }
       } else {
         const raceId = await createRace({
           name: raceName,
@@ -450,7 +464,7 @@ export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", c
                   items={pois.map((p) => p.id)}
                   strategy={verticalListSortingStrategy}
                 >
-                  <div className="overflow-y-auto max-h-64">
+                  <div ref={listAnimationParent} className="overflow-y-auto max-h-64">
                     {pois.map((poi, index) => (
                       <SortableCheckpointItem
                         key={poi.id}
@@ -513,7 +527,7 @@ export function RaceEditor({ initialRace, initialPOIs, mode = "collaborative", c
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search for a place..."
                 autoFocus
-                className="flex-1 text-base outline-none bg-transparent"
+                className="flex-1 text-base text-gray-900 placeholder:text-gray-400 outline-none bg-transparent"
               />
               {isSearching && <Loader2 className="w-5 h-5 text-gray-400 animate-spin flex-shrink-0" />}
               {searchQuery && !isSearching && (

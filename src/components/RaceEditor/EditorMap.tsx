@@ -531,7 +531,7 @@ export function EditorMap({
           }
         }, 0);
       } else if (data?.type === "searched" && data.location) {
-        // Searched location - set as pending add
+        // Searched location - set as pending add and remove the searched marker
         setPendingRemoval(null);
         setPendingPOI({
           id: data.location.id,
@@ -540,6 +540,17 @@ export function EditorMap({
           name: data.location.name,
           fullAddress: data.location.fullAddress,
         });
+        // Remove the searched annotation so only '+' pin shows
+        if (searchedAnnotationRef.current && mapRef.current) {
+          mapRef.current.removeAnnotation(searchedAnnotationRef.current);
+          searchedAnnotationRef.current = null;
+        }
+        // Deselect to prevent default behavior
+        setTimeout(() => {
+          if (mapRef.current) {
+            (mapRef.current as unknown as { selectedAnnotation: null }).selectedAnnotation = null;
+          }
+        }, 0);
       } else if (annotation.coordinate && !data?.type) {
         // Native Apple Maps POI - set as pending add and deselect native annotation
         const coord = annotation.coordinate as { latitude: number; longitude: number };

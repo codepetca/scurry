@@ -311,13 +311,21 @@ export default function GamePage() {
 
           {/* Host controls */}
           {isHost && (
-            <button
-              onClick={handleStart}
-              disabled={!players || players.length < 1}
-              className="w-full py-4 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white text-lg font-semibold rounded-xl transition-colors"
-            >
-              Start Game
-            </button>
+            <div className="space-y-3">
+              <button
+                onClick={() => router.push(`/races/${game.raceId}/edit?returnTo=${code}`)}
+                className="w-full py-3 bg-white hover:bg-gray-50 text-blue-500 font-medium rounded-xl shadow-sm transition-colors border border-gray-200"
+              >
+                Edit Race
+              </button>
+              <button
+                onClick={handleStart}
+                disabled={!players || players.length < 1}
+                className="w-full py-4 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white text-lg font-semibold rounded-xl transition-colors"
+              >
+                Start Game
+              </button>
+            </div>
           )}
 
           {!isHost && (
