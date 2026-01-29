@@ -11,6 +11,7 @@ export interface POI {
   order: number;
   lat: number;
   lng: number;
+  name?: string;
   clue: string;
   validationType: ValidationType;
   validationConfig?: {

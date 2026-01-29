@@ -17,6 +17,7 @@ export const create = mutation({
   args: {
     raceId: v.id("races"),
     hostId: v.string(),
+    hostDisplayName: v.optional(v.string()),
     mode: v.union(v.literal("collaborative"), v.literal("competitive")),
     teamNames: v.array(v.string()),
     timeLimit: v.optional(v.number()),
@@ -56,7 +57,7 @@ export const create = mutation({
     await ctx.db.insert("players", {
       gameId,
       visitorId: args.hostId,
-      displayName: "Host",
+      displayName: args.hostDisplayName || "Host",
       teamIndex: 0,
       joinedAt: Date.now(),
       isHost: true,
@@ -86,8 +87,8 @@ export const join = mutation({
       throw new Error("Game not found");
     }
 
-    if (game.status !== "lobby") {
-      throw new Error("Game has already started");
+    if (game.status === "ended") {
+      throw new Error("Game has ended");
     }
 
     if (game.expiresAt < Date.now()) {
@@ -391,5 +392,46 @@ export const cleanupExpired = internalMutation({
     }
 
     return { deleted: expiredGames.length };
+  },
+});
+
+// Update game settings (host only, lobby only)
+export const updateSettings = mutation({
+  args: {
+    gameId: v.id("games"),
+    hostId: v.string(),
+    teamNames: v.optional(v.array(v.string())),
+    timeLimit: v.optional(v.union(v.number(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const game = await ctx.db.get(args.gameId);
+
+    if (!game) {
+      throw new Error("Game not found");
+    }
+
+    if (game.hostId !== args.hostId) {
+      throw new Error("Only the host can update settings");
+    }
+
+    if (game.status !== "lobby") {
+      throw new Error("Can only update settings in lobby");
+    }
+
+    const updates: { teamNames?: string[]; timeLimit?: number } = {};
+
+    if (args.teamNames !== undefined) {
+      updates.teamNames = args.teamNames;
+    }
+
+    if (args.timeLimit !== undefined) {
+      updates.timeLimit = args.timeLimit === null ? undefined : args.timeLimit;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await ctx.db.patch(args.gameId, updates);
+    }
+
+    return { success: true };
   },
 });
